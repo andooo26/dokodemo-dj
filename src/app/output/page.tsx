@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import Link from 'next/link'
 
@@ -42,10 +42,10 @@ export default function OutputPage() {
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
   const selectedRef = useRef('')
 
-  const addLog = (msg: string) => {
+  const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
     setLog(prev => [`[${ts}] ${msg}`, ...prev].slice(0, 40))
-  }
+  }, [])
 
   // --- Web MIDI API ---
   useEffect(() => {
@@ -101,7 +101,7 @@ export default function OutputPage() {
       // MIDI 出力
       const out = outputsRef.current.get(selectedRef.current)
       if (!out) {
-        addLog('⚠ MIDI ポート未選択')
+        addLog('MIDIポートを選択してください')
         return
       }
       const bytes = toBytes(msg)
@@ -115,8 +115,8 @@ export default function OutputPage() {
     return () => { socket.disconnect() }
   }, [])
 
-  const sockColor = sockStatus === 'connected' ? 'text-green-400' : 'text-gray-500'
-  const midiColor = midiPorts.length > 0 ? 'text-green-400' : 'text-yellow-400'
+  const sockColor = sockStatus === 'connected' ? 'text-white' : 'text-gray-500'
+  const midiColor = midiPorts.length > 0 ? 'text-white' : 'text-yellow-400'
 
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col font-sans overflow-hidden">
@@ -182,11 +182,11 @@ export default function OutputPage() {
 
         {/* Log */}
         <section className="flex flex-col gap-3 flex-1">
-          <label className="text-xs text-gray-400 uppercase tracking-widest">MIDI ログ</label>
+          <label className="text-xs text-gray-400 uppercase tracking-widest">MIDI LOG</label>
           <div className="flex-1 bg-gray-900 rounded-2xl p-4 overflow-y-auto font-mono text-xs space-y-0.5">
             {log.length === 0
               ? <p className="text-gray-600">スマホから操作するとここにログが流れます</p>
-              : log.map((l, i) => <p key={i} className="text-green-400 leading-5">{l}</p>)}
+              : log.map((l, i) => <p key={i} className="text-white leading-5">{l}</p>)}
           </div>
         </section>
 

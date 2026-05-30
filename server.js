@@ -7,12 +7,6 @@ const next = require('next')
 const { Server } = require('socket.io')
 
 const dev = process.env.NODE_ENV !== 'production'
-
-if (dev) {
-  console.error('ERROR: NODE_ENV=production が必要です。')
-  console.error('  → npm run mobile  で起動してください。')
-  process.exit(1)
-}
 const port = parseInt(process.env.PORT || '3000', 10)
 
 const app = next({ dev })
