@@ -105,6 +105,7 @@ export default function Controller() {
 
       {/* Header */}
       <div className="flex items-center gap-2">
+        <h1 className="text-lg font-bold">どこでもDJ</h1>
         <StatusDot status={status} />
         <span className="text-sm text-gray-400">{status}</span>
         <div className="ml-auto flex gap-2">

@@ -119,89 +119,78 @@ export default function OutputPage() {
   const midiColor = midiPorts.length > 0 ? 'text-green-400' : 'text-yellow-400'
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white p-6 max-w-lg mx-auto space-y-6 font-sans">
+    <div className="h-screen bg-gray-950 text-white flex flex-col font-sans overflow-hidden">
 
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">どこでもDJ — MIDI Output</h1>
-          <p className="text-sm text-gray-400 mt-1">
-            このページを PC の Chrome / Edge で開いたままにしてください
-          </p>
-        </div>
-        <Link
-          href="/"
-          className="shrink-0 px-4 py-2 rounded-xl text-sm font-medium
-                     bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
-        >
-          スマホ版
-        </Link>
-      </div>
-
-      {/* Status */}
-      <section className="bg-gray-900 rounded-2xl p-4 space-y-2 text-sm">
-        <div className={sockColor}>
-          ● Socket: {sockStatus === 'connected' ? 'スマホからの接続待機中' : '切断 — server.js が起動しているか確認'}
-        </div>
-        <div className={midiColor}>
-          ♪ MIDI: {midiStatus}
-        </div>
-      </section>
-
-      {/* Pad monitor */}
-      <section className="space-y-2">
-        <label className="text-xs text-gray-400 uppercase tracking-widest">Pad Monitor</label>
-        <div className="grid grid-cols-4 gap-3">
-          {PAD_NOTES.map((note, i) => (
-            <div
-              key={note}
-              className={`rounded-2xl h-20 flex items-center justify-center text-xl font-semibold
-                          border transition-all duration-75
-                          ${activePads.has(note)
-                            ? 'bg-white text-gray-950 border-white scale-95'
-                            : 'bg-gray-800 text-gray-600 border-gray-700'}`}
+      {/* Header bar */}
+      <header className="flex items-center gap-6 px-6 py-3 border-b border-gray-800 shrink-0">
+        <h1 className="text-xl font-bold">どこでもDJ</h1>
+        <span className={`text-sm ${sockColor}`}>
+          ● {sockStatus === 'connected' ? 'スマホ接続中' : '未接続'}
+        </span>
+        <span className={`text-sm ${midiColor}`}>♪ {midiStatus}</span>
+        <div className="ml-auto flex items-center gap-3">
+          {midiPorts.length === 0 ? (
+            <span className="text-sm text-yellow-400">MIDI デバイスなし</span>
+          ) : (
+            <select
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm
+                         focus:outline-none focus:border-blue-500"
+              value={selectedPort}
+              onChange={e => {
+                setSelectedPort(e.target.value)
+                selectedRef.current = e.target.value
+                addLog(`ポート変更: ${e.target.value || '(未選択)'}`)
+              }}
             >
-              {i + 1}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* MIDI port selector */}
-      <section className="space-y-2">
-        <label className="text-xs text-gray-400 uppercase tracking-widest">MIDI 出力ポート</label>
-        {midiPorts.length === 0 ? (
-          <p className="text-sm text-yellow-400">
-            MIDI デバイスが見つかりません。DJ ソフトの仮想ポートを有効にしてください。
-          </p>
-        ) : (
-          <select
-            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm
-                       focus:outline-none focus:border-blue-500"
-            value={selectedPort}
-            onChange={e => {
-              setSelectedPort(e.target.value)
-              selectedRef.current = e.target.value
-              addLog(`ポート変更: ${e.target.value || '(未選択)'}`)
-            }}
+              <option value="">-- ポートを選択 --</option>
+              {midiPorts.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+          <Link
+            href="/"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium
+                       bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
           >
-            <option value="">-- ポートを選択 --</option>
-            {midiPorts.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        )}
-      </section>
-
-      {/* Log */}
-      <section className="space-y-2">
-        <label className="text-xs text-gray-400 uppercase tracking-widest">MIDI ログ</label>
-        <div className="bg-gray-900 rounded-2xl p-3 h-56 overflow-y-auto font-mono text-xs space-y-0.5">
-          {log.length === 0
-            ? <p className="text-gray-600">スマホから操作するとここにログが流れます</p>
-            : log.map((l, i) => <p key={i} className="text-green-400 leading-5">{l}</p>)}
+            スマホ版
+          </Link>
         </div>
-      </section>
+      </header>
 
-    </main>
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden p-6 gap-6">
+
+        {/* Pad Monitor */}
+        <section className="flex flex-col gap-3 w-1/2">
+          <label className="text-xs text-gray-400 uppercase tracking-widest">Pad Monitor</label>
+          <div className="grid grid-cols-2 gap-4 flex-1">
+            {PAD_NOTES.map((note, i) => (
+              <div
+                key={note}
+                className={`rounded-3xl flex items-center justify-center text-5xl font-bold
+                            border-2 transition-all duration-75
+                            ${activePads.has(note)
+                              ? 'bg-white text-gray-950 border-white scale-95'
+                              : 'bg-gray-800 text-gray-600 border-gray-700'}`}
+              >
+                {i + 1}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Log */}
+        <section className="flex flex-col gap-3 flex-1">
+          <label className="text-xs text-gray-400 uppercase tracking-widest">MIDI ログ</label>
+          <div className="flex-1 bg-gray-900 rounded-2xl p-4 overflow-y-auto font-mono text-xs space-y-0.5">
+            {log.length === 0
+              ? <p className="text-gray-600">スマホから操作するとここにログが流れます</p>
+              : log.map((l, i) => <p key={i} className="text-green-400 leading-5">{l}</p>)}
+          </div>
+        </section>
+
+      </div>
+    </div>
   )
 }
