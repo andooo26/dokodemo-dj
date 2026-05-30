@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { io, Socket } from 'socket.io-client'
+import Link from 'next/link'
 
 // --- Types ---
 
@@ -106,15 +107,25 @@ export default function Controller() {
       <div className="flex items-center gap-2">
         <StatusDot status={status} />
         <span className="text-sm text-gray-400">{status}</span>
-        <button
-          disabled={!mounted || status === 'connecting'}
-          onClick={() => connect()}
-          className="ml-auto min-h-[44px] px-5 rounded-xl text-sm font-medium touch-manipulation
-                     bg-gray-800 active:bg-gray-600 border border-gray-700
-                     disabled:opacity-40 disabled:pointer-events-none transition-colors"
-        >
-          {!mounted ? '...' : status === 'connected' ? '再接続' : '接続'}
-        </button>
+        <div className="ml-auto flex gap-2">
+          <Link
+            href="/output"
+            className="min-h-[44px] px-4 rounded-xl text-sm font-medium touch-manipulation
+                       bg-gray-800 active:bg-gray-600 border border-gray-700 transition-colors
+                       flex items-center"
+          >
+            PC画面
+          </Link>
+          <button
+            disabled={!mounted || status === 'connecting'}
+            onClick={() => connect()}
+            className="min-h-[44px] px-5 rounded-xl text-sm font-medium touch-manipulation
+                       bg-gray-800 active:bg-gray-600 border border-gray-700
+                       disabled:opacity-40 disabled:pointer-events-none transition-colors"
+          >
+            {!mounted ? '...' : status === 'connected' ? '再接続' : '接続'}
+          </button>
+        </div>
       </div>
 
       {/* Pads */}
@@ -133,7 +144,7 @@ export default function Controller() {
       {/* Log */}
       <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px]">
         {log.length === 0
-          ? <p className="text-gray-600">接続してパッドを叩くとここにログが出ます</p>
+          ? <p className="text-gray-600">-log-</p>
           : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}
       </div>
 

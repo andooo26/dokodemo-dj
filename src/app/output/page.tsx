@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
+import Link from 'next/link'
 
 // --- Types ---
 
@@ -120,11 +121,20 @@ export default function OutputPage() {
   return (
     <main className="min-h-screen bg-gray-950 text-white p-6 max-w-lg mx-auto space-y-6 font-sans">
 
-      <div>
-        <h1 className="text-2xl font-bold">どこでもDJ — MIDI Output</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          このページを PC の Chrome / Edge で開いたままにしてください
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">どこでもDJ — MIDI Output</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            このページを PC の Chrome / Edge で開いたままにしてください
+          </p>
+        </div>
+        <Link
+          href="/"
+          className="shrink-0 px-4 py-2 rounded-xl text-sm font-medium
+                     bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
+        >
+          スマホ版
+        </Link>
       </div>
 
       {/* Status */}
