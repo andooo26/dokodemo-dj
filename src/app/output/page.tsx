@@ -26,16 +26,20 @@ function toBytes(msg: MidiMsg): number[] {
 
 // --- Main Page ---
 
+// スマホのパッドに対応するノート番号
+const PAD_NOTES = [36, 37, 38, 39]
+
 export default function OutputPage() {
   const [midiPorts, setMidiPorts]       = useState<string[]>([])
   const [selectedPort, setSelectedPort] = useState('')
   const [midiStatus, setMidiStatus]     = useState('初期化中...')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
   const [log, setLog]                   = useState<string[]>([])
+  const [activePads, setActivePads]     = useState<Set<number>>(new Set())
 
   // useRef で最新値をコールバック内から参照
-  const outputsRef     = useRef<Map<string, MIDIOutput>>(new Map())
-  const selectedRef    = useRef('')
+  const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
+  const selectedRef = useRef('')
 
   const addLog = (msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
@@ -86,6 +90,14 @@ export default function OutputPage() {
     socket.on('disconnect', () => { setSockStatus('disconnected'); addLog('切断しました') })
 
     socket.on('midi', (msg: MidiMsg) => {
+      // パッドの点灯状態を更新
+      if (msg.type === 'note_on' && PAD_NOTES.includes(msg.note)) {
+        setActivePads(prev => new Set(prev).add(msg.note))
+      } else if (msg.type === 'note_off' && PAD_NOTES.includes(msg.note)) {
+        setActivePads(prev => { const s = new Set(prev); s.delete(msg.note); return s })
+      }
+
+      // MIDI 出力
       const out = outputsRef.current.get(selectedRef.current)
       if (!out) {
         addLog('⚠ MIDI ポート未選択')
@@ -122,6 +134,25 @@ export default function OutputPage() {
         </div>
         <div className={midiColor}>
           ♪ MIDI: {midiStatus}
+        </div>
+      </section>
+
+      {/* Pad monitor */}
+      <section className="space-y-2">
+        <label className="text-xs text-gray-400 uppercase tracking-widest">Pad Monitor</label>
+        <div className="grid grid-cols-4 gap-3">
+          {PAD_NOTES.map((note, i) => (
+            <div
+              key={note}
+              className={`rounded-2xl h-20 flex items-center justify-center text-xl font-semibold
+                          border transition-all duration-75
+                          ${activePads.has(note)
+                            ? 'bg-white text-gray-950 border-white scale-95'
+                            : 'bg-gray-800 text-gray-600 border-gray-700'}`}
+            >
+              {i + 1}
+            </div>
+          ))}
         </div>
       </section>
 
