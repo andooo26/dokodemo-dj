@@ -45,7 +45,12 @@ function useMidiBridge() {
   }, [addLog])
 
   const send = useCallback((msg: MidiMsg) => {
-    if (!socketRef.current?.connected) return
+    if (!socketRef.current?.connected) {
+      if      (msg.type === 'note_on')  addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
+      else if (msg.type === 'note_off') addLog(`サーバに接続してください: note_off ${msg.note}`)
+      else if (msg.type === 'cc')       addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
+      return
+    }
     socketRef.current.emit('midi', msg)
     if      (msg.type === 'note_on')  addLog(`Note On  ${msg.note}`)
     else if (msg.type === 'note_off') addLog(`Note Off ${msg.note}`)
