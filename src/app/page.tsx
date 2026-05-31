@@ -97,10 +97,39 @@ function Pad({ note, label, onNoteOn, onNoteOff }: {
   )
 }
 
+function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
+  note: number; channel: number; label: string; active: boolean
+  onNoteOn: (n: number, ch: number) => void
+  onNoteOff: (n: number, ch: number) => void
+}) {
+  const [pressed, setPressed] = useState(false)
+  return (
+    <button
+      className={`rounded-2xl h-20 text-gray-200 font-semibold text-lg select-none touch-none
+                  transition-all duration-75 border
+                  ${pressed
+                    ? 'bg-yellow-300 border-yellow-200 scale-95'
+                    : active
+                      ? 'bg-yellow-600 border-yellow-500'
+                      : 'bg-yellow-950 border-yellow-900'}`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setPressed(true)
+        onNoteOn(note, channel)
+      }}
+      onPointerUp={() => { setPressed(false); onNoteOff(note, channel) }}
+      onPointerCancel={() => { setPressed(false); onNoteOff(note, channel) }}
+    >
+      {label}
+    </button>
+  )
+}
+
 // --- Page ---
 
 export default function Controller() {
   const [mounted, setMounted] = useState(false)
+  const [activeDeck, setActiveDeck] = useState(0)
   const { status, log, connect, send } = useMidiBridge()
 
   useEffect(() => { setMounted(true) }, [])
@@ -141,10 +170,24 @@ export default function Controller() {
             key={note}
             note={note}
             label={label}
-            onNoteOn={(n) => send({ type: 'note_on',  channel: 0, note: n, velocity: 127 })}
-            onNoteOff={(n) => send({ type: 'note_off', channel: 0, note: n })}
+            onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
+            onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />
         ))}
+      </div>
+
+      {/* CUE */}
+      <div className="grid grid-cols-2 gap-3">
+          <CueButton
+            note={48} channel={0} label="DECK 1" active={activeDeck === 0}
+            onNoteOn={(n, ch) => { setActiveDeck(0); send({ type: 'note_on',  channel: ch, note: n, velocity: 127 }) }}
+            onNoteOff={(n, ch) => send({ type: 'note_off', channel: ch, note: n })}
+          />
+          <CueButton
+            note={48} channel={1} label="DECK 2" active={activeDeck === 1}
+            onNoteOn={(n, ch) => { setActiveDeck(1); send({ type: 'note_on',  channel: ch, note: n, velocity: 127 }) }}
+            onNoteOff={(n, ch) => send({ type: 'note_off', channel: ch, note: n })}
+          />
       </div>
 
       {/* Log */}
