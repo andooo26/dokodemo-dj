@@ -81,7 +81,7 @@ function Pad({ note, label, onNoteOn, onNoteOff }: {
   const [pressed, setPressed] = useState(false)
   return (
     <button
-      className={`rounded-2xl h-28 text-gray-200 font-semibold text-2xl select-none touch-none
+      className={`rounded-2xl aspect-square text-gray-200 font-semibold text-2xl select-none touch-none
                   transition-all duration-75 border border-gray-700
                   ${pressed ? 'bg-gray-400 scale-95' : 'bg-gray-800'}`}
       onPointerDown={(e) => {
@@ -164,7 +164,7 @@ export default function Controller() {
       </div>
 
       {/* Pads */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         {PADS.map(({ note, label }) => (
           <Pad
             key={note}

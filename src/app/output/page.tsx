@@ -172,11 +172,11 @@ export default function OutputPage() {
             {/* DECK 1 — left */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 1</span>
-              <div className="grid grid-cols-2 gap-3 flex-1">
+              <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
                     key={note}
-                    className={`rounded-2xl flex items-center justify-center text-3xl font-bold
+                    className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
                                 border-2 transition-all duration-75
                                 ${activePadsDeck1.has(note)
                                   ? 'bg-white text-gray-950 border-white scale-95'
@@ -191,11 +191,11 @@ export default function OutputPage() {
             {/* DECK 2 — right */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 2</span>
-              <div className="grid grid-cols-2 gap-3 flex-1">
+              <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
                     key={note}
-                    className={`rounded-2xl flex items-center justify-center text-3xl font-bold
+                    className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
                                 border-2 transition-all duration-75
                                 ${activePadsDeck2.has(note)
                                   ? 'bg-white text-gray-950 border-white scale-95'
