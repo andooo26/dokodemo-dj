@@ -31,6 +31,38 @@ const PAD_NOTES           = [36, 37, 38, 39]
 const TURNTABLE_STOP_NOTE = 46
 const CUE_PLAY_NOTE       = 47
 const PLAY_STOP_NOTE      = 0
+const PITCH_CC            = 9
+const EQ_LABELS           = ['HIGH', 'MID', 'LOW', 'FILTER']
+
+// --- Monitor components ---
+
+function PitchFaderMonitor({ value }: { value: number }) {
+  const thumbPct = (1 - value / 127) * 100
+  return (
+    <div className="relative w-3 h-full">
+      <div className="absolute left-1/2 -translate-x-1/2 inset-y-0 w-0.5 bg-gray-700 rounded-full" />
+      <div className="absolute left-0 right-0 top-1/2 h-px bg-gray-500" />
+      <div
+        className="absolute left-0 right-0 h-3 bg-gray-400 rounded"
+        style={{ top: `${thumbPct}%`, transform: 'translateY(-50%)' }}
+      />
+    </div>
+  )
+}
+
+function KnobMonitor({ value, label }: { value: number; label: string }) {
+  const angle = (value / 127) * 270 - 135
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 relative">
+        <div className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
+          <div className="absolute top-1 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-gray-400 rounded-full" />
+        </div>
+      </div>
+      <span className="text-xs text-gray-600 uppercase tracking-wider">{label}</span>
+    </div>
+  )
+}
 
 // --- TurntableMonitor ---
 
@@ -73,6 +105,10 @@ export default function OutputPage() {
   const [cueDeck2, setCueDeck2]                = useState(false)
   const [playDeck1, setPlayDeck1]              = useState(false)
   const [playDeck2, setPlayDeck2]              = useState(false)
+  const [pitchDeck1, setPitchDeck1]            = useState(64)
+  const [pitchDeck2, setPitchDeck2]            = useState(64)
+  const [eqDeck1, setEqDeck1]                  = useState([64, 64, 64, 64])
+  const [eqDeck2, setEqDeck2]                  = useState([64, 64, 64, 64])
 
   // useRef で最新値をコールバック内から参照
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
@@ -166,6 +202,15 @@ export default function OutputPage() {
         if (msg.channel === 0) setPlayDeck1(false)
         else if (msg.channel === 1) setPlayDeck2(false)
       }
+      if (msg.type === 'cc' && msg.controller === PITCH_CC) {
+        if (msg.channel === 0) setPitchDeck1(msg.value)
+        else if (msg.channel === 1) setPitchDeck2(msg.value)
+      }
+      if (msg.type === 'cc' && msg.controller >= 10 && msg.controller <= 13) {
+        const idx = msg.controller - 10
+        if (msg.channel === 0) setEqDeck1(prev => prev.map((v, i) => i === idx ? msg.value : v))
+        else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
+      }
 
       // MIDI 出力
       const out = outputsRef.current.get(selectedRef.current)
@@ -238,7 +283,12 @@ export default function OutputPage() {
             {/* DECK 1 — left */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 1</span>
-              <TurntableMonitor angle={angleDeck1} stopped={stoppedDeck1} />
+              <div className="relative">
+                <TurntableMonitor angle={angleDeck1} stopped={stoppedDeck1} />
+                <div className="absolute right-0 top-0 bottom-0 py-1">
+                  <PitchFaderMonitor value={pitchDeck1} />
+                </div>
+              </div>
               <div className="flex gap-2 justify-center">
                 {[{ label: 'CUE', active: cueDeck1 }, { label: '▷/‖', active: playDeck1 }].map(({ label, active }) => (
                   <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
@@ -261,12 +311,22 @@ export default function OutputPage() {
                   </div>
                 ))}
               </div>
+              <div className="grid grid-cols-4 gap-1">
+                {EQ_LABELS.map((label, i) => (
+                  <KnobMonitor key={label} value={eqDeck1[i]} label={label} />
+                ))}
+              </div>
             </div>
 
             {/* DECK 2 — right */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 2</span>
-              <TurntableMonitor angle={angleDeck2} stopped={stoppedDeck2} />
+              <div className="relative">
+                <TurntableMonitor angle={angleDeck2} stopped={stoppedDeck2} />
+                <div className="absolute right-0 top-0 bottom-0 py-1">
+                  <PitchFaderMonitor value={pitchDeck2} />
+                </div>
+              </div>
               <div className="flex gap-2 justify-center">
                 {[{ label: 'CUE', active: cueDeck2 }, { label: '▷/‖', active: playDeck2 }].map(({ label, active }) => (
                   <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
@@ -287,6 +347,11 @@ export default function OutputPage() {
                   >
                     {i + 1}
                   </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {EQ_LABELS.map((label, i) => (
+                  <KnobMonitor key={label} value={eqDeck2[i]} label={label} />
                 ))}
               </div>
             </div>
