@@ -144,6 +144,50 @@ function Turntable({ channel, send }: {
   )
 }
 
+function CuePlayButton({ channel, send }: {
+  channel: number; send: (msg: MidiMsg) => void
+}) {
+  const [pressed, setPressed] = useState(false)
+  return (
+    <button
+      className={`w-12 h-12 rounded-full text-xs font-semibold select-none touch-none border border-gray-700
+                  transition-all duration-75
+                  ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setPressed(true)
+        send({ type: 'note_on', channel, note: 47, velocity: 127 })
+      }}
+      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: 47 }) }}
+      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: 47 }) }}
+    >
+      CUE
+    </button>
+  )
+}
+
+function PlayStopButton({ channel, send }: {
+  channel: number; send: (msg: MidiMsg) => void
+}) {
+  const [pressed, setPressed] = useState(false)
+  return (
+    <button
+      className={`w-12 h-12 rounded-full text-sm font-semibold select-none touch-none border border-gray-700
+                  transition-all duration-75
+                  ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setPressed(true)
+        send({ type: 'note_on', channel, note: 0, velocity: 127 })
+      }}
+      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: 0 }) }}
+      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: 0 }) }}
+    >
+      ▷/‖
+    </button>
+  )
+}
+
 function StatusDot({ status }: { status: Status }) {
   const cls: Record<Status, string> = {
     connected:    'bg-gray-300',
@@ -244,8 +288,14 @@ export default function Controller() {
       </div>
 
       {/* Turntable */}
-      <div className="w-3/5 mx-auto">
-        <Turntable channel={activeDeck} send={send} />
+      <div className="relative flex justify-center">
+        <div className="w-3/5">
+          <Turntable channel={activeDeck} send={send} />
+        </div>
+        <div className="absolute left-0 bottom-0 flex flex-col gap-2">
+          <CuePlayButton channel={activeDeck} send={send} />
+          <PlayStopButton channel={activeDeck} send={send} />
+        </div>
       </div>
 
       {/* Pads */}

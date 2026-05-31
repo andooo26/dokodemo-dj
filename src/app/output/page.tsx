@@ -27,8 +27,10 @@ function toBytes(msg: MidiMsg): number[] {
 
 // --- Constants ---
 
-const PAD_NOTES          = [36, 37, 38, 39]
+const PAD_NOTES           = [36, 37, 38, 39]
 const TURNTABLE_STOP_NOTE = 46
+const CUE_PLAY_NOTE       = 47
+const PLAY_STOP_NOTE      = 0
 
 // --- TurntableMonitor ---
 
@@ -67,6 +69,10 @@ export default function OutputPage() {
   const [angleDeck2, setAngleDeck2]            = useState(0)
   const [stoppedDeck1, setStoppedDeck1]        = useState(false)
   const [stoppedDeck2, setStoppedDeck2]        = useState(false)
+  const [cueDeck1, setCueDeck1]                = useState(false)
+  const [cueDeck2, setCueDeck2]                = useState(false)
+  const [playDeck1, setPlayDeck1]              = useState(false)
+  const [playDeck2, setPlayDeck2]              = useState(false)
 
   // useRef で最新値をコールバック内から参照
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
@@ -144,6 +150,22 @@ export default function OutputPage() {
         if (msg.channel === 0) setStoppedDeck1(false)
         else if (msg.channel === 1) setStoppedDeck2(false)
       }
+      if (msg.type === 'note_on' && msg.note === CUE_PLAY_NOTE) {
+        if (msg.channel === 0) setCueDeck1(true)
+        else if (msg.channel === 1) setCueDeck2(true)
+      }
+      if (msg.type === 'note_off' && msg.note === CUE_PLAY_NOTE) {
+        if (msg.channel === 0) setCueDeck1(false)
+        else if (msg.channel === 1) setCueDeck2(false)
+      }
+      if (msg.type === 'note_on' && msg.note === PLAY_STOP_NOTE) {
+        if (msg.channel === 0) setPlayDeck1(true)
+        else if (msg.channel === 1) setPlayDeck2(true)
+      }
+      if (msg.type === 'note_off' && msg.note === PLAY_STOP_NOTE) {
+        if (msg.channel === 0) setPlayDeck1(false)
+        else if (msg.channel === 1) setPlayDeck2(false)
+      }
 
       // MIDI 出力
       const out = outputsRef.current.get(selectedRef.current)
@@ -217,6 +239,14 @@ export default function OutputPage() {
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 1</span>
               <TurntableMonitor angle={angleDeck1} stopped={stoppedDeck1} />
+              <div className="flex gap-2 justify-center">
+                {[{ label: 'CUE', active: cueDeck1 }, { label: '▷/‖', active: playDeck1 }].map(({ label, active }) => (
+                  <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
+                                               ${active ? 'bg-white text-gray-950 border-white' : 'bg-gray-800 text-gray-600 border-gray-700'}`}>
+                    {label}
+                  </div>
+                ))}
+              </div>
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
@@ -237,6 +267,14 @@ export default function OutputPage() {
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 2</span>
               <TurntableMonitor angle={angleDeck2} stopped={stoppedDeck2} />
+              <div className="flex gap-2 justify-center">
+                {[{ label: 'CUE', active: cueDeck2 }, { label: '▷/‖', active: playDeck2 }].map(({ label, active }) => (
+                  <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
+                                               ${active ? 'bg-white text-gray-950 border-white' : 'bg-gray-800 text-gray-600 border-gray-700'}`}>
+                    {label}
+                  </div>
+                ))}
+              </div>
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
