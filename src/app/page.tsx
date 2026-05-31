@@ -18,6 +18,12 @@ type Status = 'disconnected' | 'connecting' | 'connected'
 
 const TURNTABLE_STOP_NOTE = 46
 const PITCH_CC            = 9
+const EQ_KNOBS = [
+  { label: 'HIGH',   cc: 10 },
+  { label: 'MID',    cc: 11 },
+  { label: 'LOW',    cc: 12 },
+  { label: 'FILTER', cc: 13 },
+]
 
 const PADS = [
   { note: 36, label: '1' },
@@ -141,6 +147,44 @@ function Turntable({ channel, send }: {
         <div className={`w-14 h-14 rounded-full border-2 transition-colors
                          ${pressed ? 'bg-gray-300 border-gray-200' : 'bg-gray-600 border-gray-500'}`} />
       </div>
+    </div>
+  )
+}
+
+function Knob({ label, cc, channel, send }: {
+  label: string; cc: number; channel: number; send: (msg: MidiMsg) => void
+}) {
+  const [value, setValue] = useState(64)
+  const dragRef = useRef<{ y: number; startValue: number } | null>(null)
+  const angle   = (value / 127) * 270 - 135
+
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        className="w-14 h-14 rounded-full bg-gray-800 border border-gray-700 relative select-none touch-none cursor-pointer"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId)
+          dragRef.current = { y: e.clientY, startValue: value }
+        }}
+        onPointerMove={(e) => {
+          if (!dragRef.current) return
+          const delta = dragRef.current.y - e.clientY
+          let v = Math.max(0, Math.min(127, Math.round(dragRef.current.startValue + delta * 0.5)))
+          if (Math.abs(v - 64) <= 4) v = 64
+          setValue(v)
+          send({ type: 'cc', channel, controller: cc, value: v })
+        }}
+        onPointerUp={() => { dragRef.current = null }}
+        onPointerCancel={() => { dragRef.current = null }}
+      >
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ transform: `rotate(${angle}deg)` }}
+        >
+          <div className="absolute top-1.5 left-1/2 -translate-x-1/2 w-1 h-3 bg-gray-400 rounded-full" />
+        </div>
+      </div>
+      <span className="text-xs text-gray-500 uppercase tracking-wider">{label}</span>
     </div>
   )
 }
@@ -358,6 +402,13 @@ export default function Controller() {
             onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
             onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />
+        ))}
+      </div>
+
+      {/* EQ / Filter */}
+      <div className="grid grid-cols-4 gap-3">
+        {EQ_KNOBS.map(({ label, cc }) => (
+          <Knob key={label} label={label} cc={cc} channel={activeDeck} send={send} />
         ))}
       </div>
 
