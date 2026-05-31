@@ -17,6 +17,7 @@ type Status = 'disconnected' | 'connecting' | 'connected'
 // --- Constants ---
 
 const TURNTABLE_STOP_NOTE = 46
+const PITCH_CC            = 9
 
 const PADS = [
   { note: 36, label: '1' },
@@ -140,6 +141,52 @@ function Turntable({ channel, send }: {
         <div className={`w-14 h-14 rounded-full border-2 transition-colors
                          ${pressed ? 'bg-gray-300 border-gray-200' : 'bg-gray-600 border-gray-500'}`} />
       </div>
+    </div>
+  )
+}
+
+function PitchFader({ channel, send }: {
+  channel: number
+  send: (msg: MidiMsg) => void
+}) {
+  const [value, setValue] = useState(64)
+  const trackRef   = useRef<HTMLDivElement>(null)
+  const draggingRef = useRef(false)
+
+  const updateFromPointer = (e: React.PointerEvent) => {
+    if (!trackRef.current) return
+    const rect  = trackRef.current.getBoundingClientRect()
+    const ratio = 1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    let v       = Math.round(ratio * 127)
+    if (Math.abs(v - 64) <= 4) v = 64
+    setValue(v)
+    send({ type: 'cc', channel, controller: PITCH_CC, value: v })
+  }
+
+  const thumbPct = (1 - value / 127) * 100
+
+  return (
+    <div
+      ref={trackRef}
+      className="relative w-5 h-full select-none touch-none cursor-pointer"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        draggingRef.current = true
+        updateFromPointer(e)
+      }}
+      onPointerMove={(e) => { if (draggingRef.current) updateFromPointer(e) }}
+      onPointerUp={() => { draggingRef.current = false }}
+      onPointerCancel={() => { draggingRef.current = false }}
+    >
+      {/* トラック */}
+      <div className="absolute left-1/2 -translate-x-1/2 inset-y-0 w-1 bg-gray-700 rounded-full" />
+      {/* センターマーク */}
+      <div className="absolute left-0 right-0 top-1/2 h-px bg-gray-500" />
+      {/* サム */}
+      <div
+        className="absolute left-0 right-0 h-5 bg-gray-400 rounded border border-gray-300 transition-none"
+        style={{ top: `${thumbPct}%`, transform: 'translateY(-50%)' }}
+      />
     </div>
   )
 }
@@ -295,6 +342,9 @@ export default function Controller() {
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
           <CuePlayButton channel={activeDeck} send={send} />
           <PlayStopButton channel={activeDeck} send={send} />
+        </div>
+        <div className="absolute right-0 inset-y-0 py-2">
+          <PitchFader channel={activeDeck} send={send} />
         </div>
       </div>
 
