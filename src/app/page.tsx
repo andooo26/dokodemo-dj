@@ -276,7 +276,7 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
   const [pressed, setPressed] = useState(false)
   return (
     <button
-      className={`rounded-2xl h-20 text-gray-200 font-semibold text-lg select-none touch-none
+      className={`rounded-2xl h-12 text-gray-200 font-semibold text-sm select-none touch-none
                   transition-all duration-75 border
                   ${pressed
                     ? 'bg-yellow-300 border-yellow-200 scale-95'
