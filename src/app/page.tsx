@@ -155,14 +155,23 @@ function Knob({ label, cc, channel, send }: {
   label: string; cc: number; channel: number; send: (msg: MidiMsg) => void
 }) {
   const [value, setValue] = useState(64)
-  const dragRef = useRef<{ y: number; startValue: number } | null>(null)
-  const angle   = (value / 127) * 270 - 135
+  const dragRef    = useRef<{ y: number; startValue: number } | null>(null)
+  const lastTapRef = useRef<number>(0)
+  const angle      = (value / 127) * 270 - 135
 
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div
         className="w-14 h-14 rounded-full bg-gray-800 border border-gray-700 relative select-none touch-none cursor-pointer"
         onPointerDown={(e) => {
+          const now = Date.now()
+          if (now - lastTapRef.current < 300) {
+            lastTapRef.current = 0
+            setValue(64)
+            send({ type: 'cc', channel, controller: cc, value: 64 })
+            return
+          }
+          lastTapRef.current = now
           e.currentTarget.setPointerCapture(e.pointerId)
           dragRef.current = { y: e.clientY, startValue: value }
         }}
