@@ -35,8 +35,9 @@ export default function OutputPage() {
   const [selectedPort, setSelectedPort] = useState('')
   const [midiStatus, setMidiStatus]     = useState('初期化中...')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
-  const [log, setLog]                   = useState<string[]>([])
-  const [activePads, setActivePads]     = useState<Set<number>>(new Set())
+  const [log, setLog]                     = useState<string[]>([])
+  const [activePadsDeck1, setActivePadsDeck1] = useState<Set<number>>(new Set())
+  const [activePadsDeck2, setActivePadsDeck2] = useState<Set<number>>(new Set())
 
   // useRef で最新値をコールバック内から参照
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
@@ -93,9 +94,11 @@ export default function OutputPage() {
     socket.on('midi', (msg: MidiMsg) => {
       // パッドの点灯状態を更新
       if (msg.type === 'note_on' && PAD_NOTES.includes(msg.note)) {
-        setActivePads(prev => new Set(prev).add(msg.note))
+        if (msg.channel === 0) setActivePadsDeck1(prev => new Set(prev).add(msg.note))
+        else if (msg.channel === 1) setActivePadsDeck2(prev => new Set(prev).add(msg.note))
       } else if (msg.type === 'note_off' && PAD_NOTES.includes(msg.note)) {
-        setActivePads(prev => { const s = new Set(prev); s.delete(msg.note); return s })
+        if (msg.channel === 0) setActivePadsDeck1(prev => { const s = new Set(prev); s.delete(msg.note); return s })
+        else if (msg.channel === 1) setActivePadsDeck2(prev => { const s = new Set(prev); s.delete(msg.note); return s })
       }
 
       // MIDI 出力
@@ -164,19 +167,46 @@ export default function OutputPage() {
         {/* Pad Monitor */}
         <section className="flex flex-col gap-3 w-1/2">
           <label className="text-xs text-gray-400 uppercase tracking-widest">Pad Monitor</label>
-          <div className="grid grid-cols-2 gap-4 flex-1">
-            {PAD_NOTES.map((note, i) => (
-              <div
-                key={note}
-                className={`rounded-3xl flex items-center justify-center text-5xl font-bold
-                            border-2 transition-all duration-75
-                            ${activePads.has(note)
-                              ? 'bg-white text-gray-950 border-white scale-95'
-                              : 'bg-gray-800 text-gray-600 border-gray-700'}`}
-              >
-                {i + 1}
+          <div className="flex gap-4 flex-1">
+
+            {/* DECK 1 — left */}
+            <div className="flex flex-col gap-2 flex-1">
+              <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 1</span>
+              <div className="grid grid-cols-2 gap-3 flex-1">
+                {PAD_NOTES.map((note, i) => (
+                  <div
+                    key={note}
+                    className={`rounded-2xl flex items-center justify-center text-3xl font-bold
+                                border-2 transition-all duration-75
+                                ${activePadsDeck1.has(note)
+                                  ? 'bg-white text-gray-950 border-white scale-95'
+                                  : 'bg-gray-800 text-gray-600 border-gray-700'}`}
+                  >
+                    {i + 1}
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
+
+            {/* DECK 2 — right */}
+            <div className="flex flex-col gap-2 flex-1">
+              <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 2</span>
+              <div className="grid grid-cols-2 gap-3 flex-1">
+                {PAD_NOTES.map((note, i) => (
+                  <div
+                    key={note}
+                    className={`rounded-2xl flex items-center justify-center text-3xl font-bold
+                                border-2 transition-all duration-75
+                                ${activePadsDeck2.has(note)
+                                  ? 'bg-white text-gray-950 border-white scale-95'
+                                  : 'bg-gray-800 text-gray-600 border-gray-700'}`}
+                  >
+                    {i + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         </section>
 
