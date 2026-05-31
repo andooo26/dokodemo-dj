@@ -25,19 +25,48 @@ function toBytes(msg: MidiMsg): number[] {
   return []
 }
 
-// --- Main Page ---
+// --- Constants ---
 
-// スマホのパッドに対応するノート番号
-const PAD_NOTES = [36, 37, 38, 39]
+const PAD_NOTES          = [36, 37, 38, 39]
+const TURNTABLE_STOP_NOTE = 46
+
+// --- TurntableMonitor ---
+
+function TurntableMonitor({ angle, stopped }: { angle: number; stopped: boolean }) {
+  return (
+    <div className={`relative rounded-full w-3/4 mx-auto aspect-square border-4 transition-colors duration-75
+                     ${stopped ? 'border-gray-400 bg-gray-700' : 'border-gray-700 bg-gray-800'}`}>
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ transform: `rotate(${angle}deg)` }}
+      >
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-1.5 h-6 bg-gray-400 rounded-full" />
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className={`w-8 h-8 rounded-full border-2 transition-colors
+                         ${stopped ? 'bg-gray-300 border-gray-200' : 'bg-gray-600 border-gray-500'}`} />
+      </div>
+      {stopped && (
+        <div className="absolute inset-0 flex items-end justify-center pb-3 pointer-events-none">
+          <span className="text-xs text-gray-300 font-bold tracking-widest">STOP</span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function OutputPage() {
   const [midiPorts, setMidiPorts]       = useState<string[]>([])
   const [selectedPort, setSelectedPort] = useState('')
   const [midiStatus, setMidiStatus]     = useState('初期化中...')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
-  const [log, setLog]                     = useState<string[]>([])
-  const [activePadsDeck1, setActivePadsDeck1] = useState<Set<number>>(new Set())
-  const [activePadsDeck2, setActivePadsDeck2] = useState<Set<number>>(new Set())
+  const [log, setLog]                          = useState<string[]>([])
+  const [activePadsDeck1, setActivePadsDeck1]  = useState<Set<number>>(new Set())
+  const [activePadsDeck2, setActivePadsDeck2]  = useState<Set<number>>(new Set())
+  const [angleDeck1, setAngleDeck1]            = useState(0)
+  const [angleDeck2, setAngleDeck2]            = useState(0)
+  const [stoppedDeck1, setStoppedDeck1]        = useState(false)
+  const [stoppedDeck2, setStoppedDeck2]        = useState(false)
 
   // useRef で最新値をコールバック内から参照
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
@@ -99,6 +128,21 @@ export default function OutputPage() {
       } else if (msg.type === 'note_off' && PAD_NOTES.includes(msg.note)) {
         if (msg.channel === 0) setActivePadsDeck1(prev => { const s = new Set(prev); s.delete(msg.note); return s })
         else if (msg.channel === 1) setActivePadsDeck2(prev => { const s = new Set(prev); s.delete(msg.note); return s })
+      }
+
+      // ターンテーブルの回転・停止状態を更新
+      if (msg.type === 'pitch_bend' && msg.value !== 8192) {
+        const delta = (msg.value - 8192) / 4096 * 90
+        if (msg.channel === 0) setAngleDeck1(prev => prev + delta)
+        else if (msg.channel === 1) setAngleDeck2(prev => prev + delta)
+      }
+      if (msg.type === 'note_on' && msg.note === TURNTABLE_STOP_NOTE) {
+        if (msg.channel === 0) setStoppedDeck1(true)
+        else if (msg.channel === 1) setStoppedDeck2(true)
+      }
+      if (msg.type === 'note_off' && msg.note === TURNTABLE_STOP_NOTE) {
+        if (msg.channel === 0) setStoppedDeck1(false)
+        else if (msg.channel === 1) setStoppedDeck2(false)
       }
 
       // MIDI 出力
@@ -172,6 +216,7 @@ export default function OutputPage() {
             {/* DECK 1 — left */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 1</span>
+              <TurntableMonitor angle={angleDeck1} stopped={stoppedDeck1} />
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
@@ -191,6 +236,7 @@ export default function OutputPage() {
             {/* DECK 2 — right */}
             <div className="flex flex-col gap-2 flex-1">
               <span className="text-xs text-gray-500 uppercase tracking-widest text-center">Deck 2</span>
+              <TurntableMonitor angle={angleDeck2} stopped={stoppedDeck2} />
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => (
                   <div
