@@ -100,10 +100,10 @@ function Turntable({ channel, send }: {
   )
 }
 
-function Knob({ label, cc, channel, send }: {
+function Knob({ label, cc, channel, send, value, onValueChange }: {
   label: string; cc: number; channel: number; send: (msg: MidiMsg) => void
+  value: number; onValueChange: (v: number) => void
 }) {
-  const [value, setValue] = useState(64)
   const dragRef    = useRef<{ y: number; startValue: number } | null>(null)
   const lastTapRef = useRef<number>(0)
   const angle      = (value / 127) * 270 - 135
@@ -116,7 +116,7 @@ function Knob({ label, cc, channel, send }: {
           const now = Date.now()
           if (now - lastTapRef.current < 300) {
             lastTapRef.current = 0
-            setValue(64)
+            onValueChange(64)
             send({ type: 'cc', channel, controller: cc, value: 64 })
             return
           }
@@ -129,7 +129,7 @@ function Knob({ label, cc, channel, send }: {
           const delta = dragRef.current.y - e.clientY
           let v = Math.max(0, Math.min(127, Math.round(dragRef.current.startValue + delta * 0.5)))
           if (Math.abs(v - 64) <= 4) v = 64
-          setValue(v)
+          onValueChange(v)
           send({ type: 'cc', channel, controller: cc, value: v })
         }}
         onPointerUp={() => { dragRef.current = null }}
@@ -147,11 +147,11 @@ function Knob({ label, cc, channel, send }: {
   )
 }
 
-function PitchFader({ channel, send }: {
+function PitchFader({ channel, send, value, onValueChange }: {
   channel: number
   send: (msg: MidiMsg) => void
+  value: number; onValueChange: (v: number) => void
 }) {
-  const [value, setValue] = useState(64)
   const trackRef   = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
 
@@ -161,16 +161,14 @@ function PitchFader({ channel, send }: {
     const ratio = 1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
     let v       = Math.round(ratio * 127)
     if (Math.abs(v - 64) <= 4) v = 64
-    setValue(v)
+    onValueChange(v)
     send({ type: 'cc', channel, controller: PITCH_CC, value: v })
   }
 
   const thumbPct = (1 - value / 127) * 100
 
   return (
-    <div
-      ref={trackRef}
-      className="relative w-5 h-full select-none touch-none cursor-pointer"
+    <div ref={trackRef} className="relative w-5 h-full select-none touch-none cursor-pointer"
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         draggingRef.current = true
@@ -301,8 +299,10 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
 // --- Page ---
 
 export default function Controller() {
-  const [mounted, setMounted] = useState(false)
+  const [mounted, setMounted]   = useState(false)
   const [activeDeck, setActiveDeck] = useState(0)
+  const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
+  const [pitchValues, setPitchValues] = useState([64, 64])
   const { status, log, connect, send } = useMidiBridge()
 
   useEffect(() => { setMounted(true) }, [])
@@ -354,7 +354,11 @@ export default function Controller() {
           <PlayStopButton channel={activeDeck} send={send} />
         </div>
         <div className="absolute right-0 inset-y-0 py-2">
-          <PitchFader channel={activeDeck} send={send} />
+          <PitchFader
+            channel={activeDeck} send={send}
+            value={pitchValues[activeDeck]}
+            onValueChange={(v) => setPitchValues(prev => { const n=[...prev]; n[activeDeck]=v; return n })}
+          />
         </div>
       </div>
 
@@ -373,8 +377,14 @@ export default function Controller() {
 
       {/* EQ / Filter */}
       <div className="grid grid-cols-4 gap-3">
-        {EQ_KNOBS.map(({ label, cc }) => (
-          <Knob key={label} label={label} cc={cc} channel={activeDeck} send={send} />
+        {EQ_KNOBS.map(({ label, cc }, idx) => (
+          <Knob
+            key={label} label={label} cc={cc} channel={activeDeck} send={send}
+            value={eqValues[activeDeck][idx]}
+            onValueChange={(v) => setEqValues(prev => {
+              const n = prev.map(row => [...row]); n[activeDeck][idx] = v; return n
+            })}
+          />
         ))}
       </div>
 
