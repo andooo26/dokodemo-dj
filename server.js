@@ -1,23 +1,37 @@
 // Custom Next.js server with embedded Socket.io relay.
 // MIDI output happens in the PC browser via Web MIDI API (/output page).
 
-const { createServer } = require('http')
+const { createServer } = require('https')
+const { createServer: createHttpServer } = require('http')
+const { readFileSync } = require('fs')
 const { parse } = require('url')
+const path = require('path')
 const next = require('next')
 const { Server } = require('socket.io')
 
-const dev = process.env.NODE_ENV !== 'production'
+const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT || '3000', 10)
 
-const app = next({ dev })
+const ssl = {
+  key:  readFileSync(path.join(__dirname, 'localhost+1-key.pem')),
+  cert: readFileSync(path.join(__dirname, 'localhost+1.pem')),
+}
+
+const app    = next({ dev })
 const handle = app.getRequestHandler()
 
 app.prepare().then(() => {
-  const httpServer = createServer((req, res) => {
+  const httpsServer = createServer(ssl, (req, res) => {
     handle(req, res, parse(req.url, true))
   })
 
-  const io = new Server(httpServer, {
+  // HTTP → HTTPS リダイレクト
+  createHttpServer((req, res) => {
+    res.writeHead(301, { Location: `https://${req.headers.host?.replace(/:\d+$/, '')}:${port}${req.url}` })
+    res.end()
+  }).listen(port + 1, '0.0.0.0')
+
+  const io = new Server(httpsServer, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
   })
 
@@ -26,7 +40,6 @@ app.prepare().then(() => {
     console.log(`[+] ${role} connected  (${socket.id})`)
     socket.join(role)
 
-    // controller (スマホ) から届いた MIDI イベントを output (PC ブラウザ) に中継
     socket.on('midi', (msg) => {
       io.to('output').emit('midi', msg)
 
@@ -42,10 +55,11 @@ app.prepare().then(() => {
     })
   })
 
-  httpServer.listen(port, '0.0.0.0', () => {
+  httpsServer.listen(port, '0.0.0.0', () => {
     console.log(`\n=== どこでもDJ ===`)
-    console.log(`スマホ (コントローラー): http://<PC の IP>:${port}/`)
-    console.log(`PC Chrome (MIDI 出力):  http://localhost:${port}/output`)
+    console.log(`スマホ (コントローラー): https://<PC の IP>:${port}/`)
+    console.log(`スマホ (AR モード):      https://<PC の IP>:${port}/ar`)
+    console.log(`PC Chrome (MIDI 出力):  https://localhost:${port}/output`)
     console.log(`\nPC の IP: ifconfig | grep "inet " | grep -v 127\n`)
   })
 })

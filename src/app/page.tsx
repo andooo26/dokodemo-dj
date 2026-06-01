@@ -1,18 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { io, Socket } from 'socket.io-client'
 import Link from 'next/link'
-
-// --- Types ---
-
-type MidiMsg =
-  | { type: 'note_on';    channel: number; note: number; velocity: number }
-  | { type: 'note_off';   channel: number; note: number }
-  | { type: 'cc';         channel: number; controller: number; value: number }
-  | { type: 'pitch_bend'; channel: number; value: number }
-
-type Status = 'disconnected' | 'connecting' | 'connected'
+import { useMidiBridge } from '@/hooks/useMidiBridge'
+import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 
 // --- Constants ---
 
@@ -31,48 +22,6 @@ const PADS = [
   { note: 38, label: '3' },
   { note: 39, label: '4' },
 ]
-
-// --- Hook ---
-
-function useMidiBridge() {
-  const [status, setStatus] = useState<Status>('disconnected')
-  const [log, setLog]       = useState<string[]>([])
-  const socketRef           = useRef<Socket | null>(null)
-
-  const addLog = useCallback((msg: string) => {
-    const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
-    setLog((prev) => [`[${ts}] ${msg}`, ...prev].slice(0, 30))
-  }, [])
-
-  const connect = useCallback(() => {
-    socketRef.current?.disconnect()
-    setStatus('connecting')
-    const s = io({ query: { role: 'controller' }, transports: ['websocket'], timeout: 5000 })
-    s.on('connect',       () => { setStatus('connected');    addLog('接続しました') })
-    s.on('disconnect',    () => { setStatus('disconnected'); addLog('切断しました') })
-    s.on('connect_error', (e) => { setStatus('disconnected'); addLog(`エラー: ${e.message}`) })
-    socketRef.current = s
-  }, [addLog])
-
-  const send = useCallback((msg: MidiMsg) => {
-    if (!socketRef.current?.connected) {
-      if      (msg.type === 'note_on')    addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
-      else if (msg.type === 'note_off')   addLog(`サーバに接続してください: note_off ${msg.note}`)
-      else if (msg.type === 'cc')         addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
-      else if (msg.type === 'pitch_bend') addLog(`サーバに接続してください: pitch_bend ${msg.value}`)
-      return
-    }
-    socketRef.current.emit('midi', msg)
-    if      (msg.type === 'note_on')  addLog(`Note On  ${msg.note}`)
-    else if (msg.type === 'note_off') addLog(`Note Off ${msg.note}`)
-    else if (msg.type === 'cc')       addLog(`CC ${msg.controller}  ${msg.value}`)
-    // pitch_bend は頻繁すぎるのでログしない
-  }, [addLog])
-
-  useEffect(() => () => { socketRef.current?.disconnect() }, [])
-
-  return { status, log, connect, send }
-}
 
 // --- Components ---
 
@@ -367,6 +316,14 @@ export default function Controller() {
         <StatusDot status={status} />
         <span className="text-sm text-gray-400">{status}</span>
         <div className="ml-auto flex gap-2">
+          <Link
+            href="/ar"
+            className="min-h-[44px] px-4 rounded-xl text-sm font-medium touch-manipulation
+                       bg-gray-800 active:bg-gray-600 border border-gray-700 transition-colors
+                       flex items-center"
+          >
+            AR
+          </Link>
           <Link
             href="/output"
             className="min-h-[44px] px-4 rounded-xl text-sm font-medium touch-manipulation
