@@ -1,19 +1,30 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import type { HandLandmarker } from '@mediapipe/tasks-vision'
 
-// --- MediaPipe config ---
+// --- MediaPipe ---
 
 const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
 const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
-// --- PAD config ---
+// --- 仮想つまみゾーン (正規化座標) ---
+// リアカメラで画面下部に手を向けやすい位置に配置
+const KNOB_ZONES = [
+  { label: 'HIGH',   cc: 10, nx: 0.20, ny: 0.22 },
+  { label: 'MID',    cc: 11, nx: 0.40, ny: 0.22 },
+  { label: 'LOW',    cc: 12, nx: 0.60, ny: 0.22 },
+  { label: 'FILTER', cc: 13, nx: 0.80, ny: 0.22 },
+] as const
 
-const PINCH_THRESHOLD = 0.07
+const FADER_HALF_H   = 0.14  // フェーダートラック半高（正規化）
+const FADER_HIT_X    = 0.06  // 横方向ホバー判定幅（正規化）
+const PINCH_THRESH   = 0.07  // ピンチ判定距離
+const FADER_SENSI    = 200   // 上下移動感度 (正規化Δy → CC value)
 
+// --- PAD ---
 const PAD_CONFIG = [
   { fingerTip: 8,  note: 36, label: 'PAD 1', color: '#60a5fa' },
   { fingerTip: 12, note: 37, label: 'PAD 2', color: '#34d399' },
@@ -21,9 +32,7 @@ const PAD_CONFIG = [
   { fingerTip: 20, note: 39, label: 'PAD 4', color: '#a78bfa' },
 ] as const
 
-const FINGER_NAMES: Record<number, string> = { 8: '人差し指', 12: '中指', 16: '薬指', 20: '小指' }
-
-// MediaPipe hand skeleton connections
+// MediaPipe スケルトン接続
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -33,22 +42,32 @@ const CONNECTIONS = [
   [5,9],[9,13],[13,17],
 ]
 
+
 // --- Page ---
 
 export default function ARPage() {
-  const videoRef      = useRef<HTMLVideoElement>(null)
-  const canvasRef     = useRef<HTMLCanvasElement>(null)
-  const landmarkerRef = useRef<HandLandmarker | null>(null)
-  const rafRef        = useRef<number>(0)
-  const activePadsRef = useRef<Set<number>>(new Set())
-  const activeDeckRef = useRef(0)
+  const videoRef       = useRef<HTMLVideoElement>(null)
+  const canvasRef      = useRef<HTMLCanvasElement>(null)
+  const landmarkerRef  = useRef<HandLandmarker | null>(null)
+  const rafRef         = useRef<number>(0)
 
-  const [isReady, setIsReady]           = useState(false)
-  const [loadingMsg, setLoadingMsg]     = useState('カメラを起動中...')
-  const [cameraError, setCameraError]   = useState('')
+  // PAD 状態
+  const activePadsRef  = useRef<Set<number>>(new Set())
+  const activeDeckRef  = useRef(0)
+
+  // つまみ状態
+  const knobValuesRef  = useRef<number[]>([64, 64, 64, 64])
+  const grabbedKnobRef = useRef<number>(-1)   // -1 = none
+  const lastYRef       = useRef<number | null>(null)
+
+  const [isReady, setIsReady]         = useState(false)
+  const [loadingMsg, setLoadingMsg]   = useState('カメラを起動中...')
+  const [cameraError, setCameraError] = useState('')
   const [activeLabels, setActiveLabels] = useState<string[]>([])
 
   const { status, connect, send } = useMidiBridge()
+  const sendRef = useRef(send)
+  useEffect(() => { sendRef.current = send }, [send])
 
   // MediaPipe 初期化
   useEffect(() => {
@@ -63,12 +82,8 @@ export default function ARPage() {
           runningMode: 'VIDEO',
           numHands: 2,
         })
-        if (!cancelled) {
-          landmarkerRef.current = hl
-          setIsReady(true)
-          setLoadingMsg('')
-        }
-      } catch (e) {
+        if (!cancelled) { landmarkerRef.current = hl; setIsReady(true); setLoadingMsg('') }
+      } catch {
         if (!cancelled) setLoadingMsg('MediaPipe の読み込みに失敗しました')
       }
     }
@@ -79,7 +94,7 @@ export default function ARPage() {
   // カメラ起動
   useEffect(() => {
     let stream: MediaStream | null = null
-    async function startCamera() {
+    async function start() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -89,45 +104,170 @@ export default function ARPage() {
         setCameraError('カメラへのアクセスが拒否されました。HTTPS 環境で開いてください。')
       }
     }
-    startCamera()
+    start()
     return () => { stream?.getTracks().forEach(t => t.stop()) }
   }, [])
 
   // rAF ループ
-  const sendRef = useRef(send)
-  useEffect(() => { sendRef.current = send }, [send])
-
   useEffect(() => {
     if (!isReady) return
 
     const labelSet = new Set<string>()
 
+    function drawFaders(ctx: CanvasRenderingContext2D, w: number, h: number, hoveredIdx: number) {
+      for (let i = 0; i < KNOB_ZONES.length; i++) {
+        const { label, nx, ny } = KNOB_ZONES[i]
+        const cx       = nx * w
+        const trackTop = (ny - FADER_HALF_H) * h
+        const trackBot = (ny + FADER_HALF_H) * h
+        const trackH   = trackBot - trackTop
+        const val      = knobValuesRef.current[i]
+        const grabbed  = grabbedKnobRef.current === i
+        const hovered  = hoveredIdx === i
+
+        const thumbY = trackTop + (1 - val / 127) * trackH
+        const centerY = (trackTop + trackBot) / 2
+
+        // トラック
+        ctx.beginPath()
+        ctx.moveTo(cx, trackTop)
+        ctx.lineTo(cx, trackBot)
+        ctx.strokeStyle = grabbed ? 'rgba(255,255,255,0.8)' : hovered ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)'
+        ctx.lineWidth   = 2
+        ctx.stroke()
+
+        // センターマーク
+        ctx.beginPath()
+        ctx.moveTo(cx - 8, centerY)
+        ctx.lineTo(cx + 8, centerY)
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)'
+        ctx.lineWidth   = 1
+        ctx.stroke()
+
+        // サム（横長の角丸バー）
+        const tw = grabbed ? 22 : hovered ? 18 : 14
+        const th = 8
+        ctx.fillStyle   = grabbed ? 'rgba(210,210,210,0.95)' : hovered ? 'rgba(180,180,180,0.75)' : 'rgba(150,150,150,0.45)'
+        ctx.strokeStyle = grabbed ? 'white' : hovered ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.3)'
+        ctx.lineWidth   = 1
+        ctx.beginPath()
+        ctx.roundRect(cx - tw, thumbY - th, tw * 2, th * 2, 4)
+        ctx.fill()
+        ctx.stroke()
+
+        // ラベル
+        ctx.font      = 'bold 11px sans-serif'
+        ctx.fillStyle = grabbed ? 'white' : hovered ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)'
+        ctx.textAlign = 'center'
+        ctx.fillText(label, cx, trackBot + 16)
+
+        // グラブ中は値を表示
+        if (grabbed) {
+          ctx.font      = '11px sans-serif'
+          ctx.fillStyle = '#93c5fd'
+          ctx.fillText(String(val), cx, trackTop - 8)
+        }
+      }
+    }
+
     function loop(now: number) {
       rafRef.current = requestAnimationFrame(loop)
 
-      const video     = videoRef.current
-      const canvas    = canvasRef.current
+      const video      = videoRef.current
+      const canvas     = canvasRef.current
       const landmarker = landmarkerRef.current
       if (!video || !canvas || !landmarker || video.readyState < 2) return
 
-      // canvas サイズ同期
       const vw = video.videoWidth  || 640
       const vh = video.videoHeight || 480
       if (canvas.width !== vw || canvas.height !== vh) {
-        canvas.width  = vw
-        canvas.height = vh
+        canvas.width = vw; canvas.height = vh
       }
 
       const results = landmarker.detectForVideo(video, now)
       const ctx     = canvas.getContext('2d')!
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-      ctx.save()
-
       labelSet.clear()
+      let hoveredKnob = -1
+
+      // 手が1本も検出されなければ全リセット
+      if (results.landmarks.length === 0) {
+        for (const note of activePadsRef.current)
+          sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
+        activePadsRef.current.clear()
+        if (grabbedKnobRef.current >= 0) {
+          grabbedKnobRef.current = -1
+          lastYRef.current       = null
+        }
+      }
 
       for (const landmarks of results.landmarks) {
+        const thumb = landmarks[4]
+        const index = landmarks[8]  // 人差し指先端
+
+        // --- フェーダーホバー判定（人差し指先端がトラック矩形内） ---
+        for (let i = 0; i < KNOB_ZONES.length; i++) {
+          const { nx, ny } = KNOB_ZONES[i]
+          if (
+            Math.abs(index.x - nx) < FADER_HIT_X &&
+            index.y > ny - FADER_HALF_H &&
+            index.y < ny + FADER_HALF_H
+          ) { hoveredKnob = i; break }
+        }
+
+        // --- 親指+人差し指ピンチ判定 ---
+        const indexPinch = Math.hypot(thumb.x - index.x, thumb.y - index.y) < PINCH_THRESH
+
+        if (indexPinch && hoveredKnob >= 0) {
+          // つまみをグラブ
+          if (grabbedKnobRef.current !== hoveredKnob) {
+            grabbedKnobRef.current = hoveredKnob
+            lastYRef.current       = index.y
+          }
+          // 上移動 → 増加、下移動 → 減少
+          const delta = lastYRef.current !== null ? (lastYRef.current - index.y) * FADER_SENSI : 0
+          lastYRef.current = index.y
+
+          let v = Math.round(knobValuesRef.current[hoveredKnob] + delta)
+          v = Math.max(0, Math.min(127, v))
+          if (Math.abs(v - 64) <= 3) v = 64
+          knobValuesRef.current[hoveredKnob] = v
+          sendRef.current({ type: 'cc', channel: activeDeckRef.current, controller: KNOB_ZONES[hoveredKnob].cc, value: v })
+          labelSet.add(KNOB_ZONES[hoveredKnob].label)
+        } else {
+          // ピンチ解除またはゾーン外ならグラブ解放
+          if (!indexPinch && grabbedKnobRef.current >= 0) {
+            grabbedKnobRef.current = -1
+            lastYRef.current       = null
+          }
+
+          // --- PAD ピンチ検出（knob grab 中でなければ） ---
+          if (grabbedKnobRef.current < 0) {
+            for (const { fingerTip, note, label, color } of PAD_CONFIG) {
+              // PAD 1（人差し指）はつまみゾーン外のときのみ発火
+              if (fingerTip === 8 && hoveredKnob >= 0) continue
+
+              const tip    = landmarks[fingerTip]
+              const dist   = Math.hypot(thumb.x - tip.x, thumb.y - tip.y)
+              const active = dist < PINCH_THRESH
+              const was    = activePadsRef.current.has(note)
+
+              if (active && !was) {
+                activePadsRef.current.add(note)
+                sendRef.current({ type: 'note_on', channel: activeDeckRef.current, note, velocity: 127 })
+              } else if (!active && was) {
+                activePadsRef.current.delete(note)
+                sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
+              }
+
+              if (active) labelSet.add(label)
+            }
+          }
+        }
+
         // スケルトン描画
+        ctx.save()
         ctx.strokeStyle = 'rgba(0,255,255,0.5)'
         ctx.lineWidth   = 2
         for (const [a, b] of CONNECTIONS) {
@@ -137,62 +277,36 @@ export default function ARPage() {
           ctx.stroke()
         }
 
-        const thumb = landmarks[4] // 親指先端
+        // 人差し指先端ドット（ホバー中は強調）
+        ctx.beginPath()
+        ctx.arc(index.x * canvas.width, index.y * canvas.height, hoveredKnob >= 0 ? 10 : 5, 0, Math.PI * 2)
+        ctx.fillStyle = hoveredKnob >= 0 ? 'white' : 'rgba(255,255,255,0.5)'
+        ctx.fill()
 
-        // PAD ピンチ検出
-        for (const { fingerTip, note, label, color } of PAD_CONFIG) {
+        // 親指先端ドット
+        ctx.beginPath()
+        ctx.arc(thumb.x * canvas.width, thumb.y * canvas.height, 7, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'
+        ctx.fill()
+
+        // PAD ピンチライン描画
+        for (const { fingerTip, color } of PAD_CONFIG) {
           const tip    = landmarks[fingerTip]
           const dist   = Math.hypot(thumb.x - tip.x, thumb.y - tip.y)
-          const active = dist < PINCH_THRESHOLD
-          const was    = activePadsRef.current.has(note)
-
-          if (active && !was) {
-            activePadsRef.current.add(note)
-            sendRef.current({ type: 'note_on', channel: activeDeckRef.current, note, velocity: 127 })
-          } else if (!active && was) {
-            activePadsRef.current.delete(note)
-            sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
-          }
-
-          // 親指〜指先ライン
-          ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.15)'
-          ctx.lineWidth   = active ? 4 : 1
+          const active = dist < PINCH_THRESH
+          if (fingerTip === 8 && hoveredKnob >= 0) continue
+          ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.1)'
+          ctx.lineWidth   = active ? 3 : 1
           ctx.beginPath()
           ctx.moveTo(thumb.x * canvas.width, thumb.y * canvas.height)
           ctx.lineTo(tip.x   * canvas.width, tip.y   * canvas.height)
           ctx.stroke()
-
-          // 指先ドット
-          ctx.fillStyle = active ? color : 'rgba(255,255,255,0.3)'
-          ctx.beginPath()
-          ctx.arc(tip.x * canvas.width, tip.y * canvas.height, active ? 8 : 5, 0, Math.PI * 2)
-          ctx.fill()
-
-          // ピンチ中はラベル表示
-          if (active) {
-            labelSet.add(label)
-            ctx.fillStyle = color
-            ctx.font      = 'bold 20px sans-serif'
-            ctx.fillText(label, tip.x * canvas.width + 10, tip.y * canvas.height - 10)
-          }
         }
-
-        // 親指先端ドット
-        ctx.fillStyle = 'white'
-        ctx.beginPath()
-        ctx.arc(thumb.x * canvas.width, thumb.y * canvas.height, 8, 0, Math.PI * 2)
-        ctx.fill()
+        ctx.restore()
       }
 
-      ctx.restore()
-
-      // 手が消えたらすべて note_off
-      if (results.landmarks.length === 0 && activePadsRef.current.size > 0) {
-        for (const note of activePadsRef.current) {
-          sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
-        }
-        activePadsRef.current.clear()
-      }
+      // 仮想フェーダー描画（毎フレーム）
+      drawFaders(ctx, canvas.width, canvas.height, hoveredKnob)
 
       setActiveLabels([...labelSet])
     }
@@ -206,20 +320,12 @@ export default function ARPage() {
   return (
     <div className="relative w-screen bg-black overflow-hidden font-sans" style={{ height: '100dvh' }}>
 
-      {/* カメラ映像 */}
-      <video
-        ref={videoRef}
-        autoPlay playsInline muted
-        className="absolute inset-0 w-full h-full object-cover"
-      />
+      <video ref={videoRef} autoPlay playsInline muted
+        className="absolute inset-0 w-full h-full object-cover" />
 
-      {/* canvas オーバーレイ */}
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-      />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-      {/* アクティブジェスチャー */}
+      {/* アクティブ表示 */}
       {activeLabels.length > 0 && (
         <div className="absolute top-20 left-0 right-0 flex justify-center pointer-events-none">
           <span className="bg-black/50 text-white text-2xl font-bold px-5 py-2 rounded-2xl">
@@ -239,25 +345,13 @@ export default function ARPage() {
       {/* フッター */}
       <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-t from-black/70 to-transparent">
         <span className={`text-sm ${sockColor}`}>● {status}</span>
-        <button
-          onClick={connect}
-          className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700"
-        >
+        <button onClick={connect}
+          className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700">
           {status === 'connected' ? '再接続' : '接続'}
         </button>
       </div>
 
-      {/* PAD ガイド */}
-      <div className="absolute right-3 bottom-16 space-y-1 pointer-events-none">
-        {PAD_CONFIG.map(({ label, color, fingerTip }) => (
-          <div key={label} className="flex items-center gap-1.5 text-xs">
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-            <span className="text-gray-300">{label}: 親指+{FINGER_NAMES[fingerTip]}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* 読み込みオーバーレイ */}
+      {/* 読み込み */}
       {(loadingMsg || !isReady) && !cameraError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-3">
           <div className="text-white text-lg">{loadingMsg || '初期化中...'}</div>
@@ -268,7 +362,7 @@ export default function ARPage() {
       {/* カメラエラー */}
       {cameraError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 px-8 text-center">
-          <p className="text-red-400 text-base">{cameraError}</p>
+          <p className="text-red-400">{cameraError}</p>
           <Link href="/" className="px-4 py-2 rounded-xl bg-gray-800 text-white text-sm border border-gray-700">
             タッチUIに戻る
           </Link>
