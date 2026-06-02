@@ -242,26 +242,28 @@ export default function ARPage() {
             lastYRef.current       = null
           }
 
-          // --- PAD ピンチ検出（knob grab 中でなければ） ---
+          // --- PAD ピンチ検出（knob grab 中でなければ・同時押し禁止） ---
           if (grabbedKnobRef.current < 0) {
-            for (const { fingerTip, note, label, color } of PAD_CONFIG) {
-              // PAD 1（人差し指）はつまみゾーン外のときのみ発火
+            // 最も深いピンチ1本だけ選択
+            let bestNote = -1, bestDist = PINCH_THRESH
+            for (const { fingerTip, note } of PAD_CONFIG) {
               if (fingerTip === 8 && hoveredKnob >= 0) continue
+              const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
+              if (dist < bestDist) { bestDist = dist; bestNote = note }
+            }
 
-              const tip    = landmarks[fingerTip]
-              const dist   = Math.hypot(thumb.x - tip.x, thumb.y - tip.y)
-              const active = dist < PINCH_THRESH
-              const was    = activePadsRef.current.has(note)
-
-              if (active && !was) {
+            for (const { fingerTip, note, label } of PAD_CONFIG) {
+              if (fingerTip === 8 && hoveredKnob >= 0) continue
+              const isActive = note === bestNote
+              const was      = activePadsRef.current.has(note)
+              if (isActive && !was) {
                 activePadsRef.current.add(note)
                 sendRef.current({ type: 'note_on', channel: activeDeckRef.current, note, velocity: 127 })
-              } else if (!active && was) {
+              } else if (!isActive && was) {
                 activePadsRef.current.delete(note)
                 sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
               }
-
-              if (active) labelSet.add(label)
+              if (isActive) labelSet.add(label)
             }
           }
         }
@@ -290,11 +292,16 @@ export default function ARPage() {
         ctx.fill()
 
         // PAD ピンチライン描画
-        for (const { fingerTip, color } of PAD_CONFIG) {
-          const tip    = landmarks[fingerTip]
-          const dist   = Math.hypot(thumb.x - tip.x, thumb.y - tip.y)
-          const active = dist < PINCH_THRESH
+        let drawBestNote = -1, drawBestDist = PINCH_THRESH
+        for (const { fingerTip, note } of PAD_CONFIG) {
           if (fingerTip === 8 && hoveredKnob >= 0) continue
+          const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
+          if (dist < drawBestDist) { drawBestDist = dist; drawBestNote = note }
+        }
+        for (const { fingerTip, note, color } of PAD_CONFIG) {
+          if (fingerTip === 8 && hoveredKnob >= 0) continue
+          const tip    = landmarks[fingerTip]
+          const active = note === drawBestNote
           ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.1)'
           ctx.lineWidth   = active ? 3 : 1
           ctx.beginPath()
