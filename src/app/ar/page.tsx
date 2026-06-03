@@ -260,14 +260,16 @@ export default function ARPage() {
             lastYRef.current       = null
           }
 
-          // --- PAD ピンチ検出（knob grab 中でなければ・同時押し禁止） ---
+          // --- PAD ピンチ検出（knob grab 中・グー状態では無効） ---
           if (grabbedKnobRef.current < 0) {
+            // グーのポーズではPAD完全無効
+            const isFist = countExtendedFingers(landmarks) === 0
             // フェーダーエリア（y < 0.4）ではPAD完全無効
             const inFaderZone = index.y < 0.4
 
-            // 最も深いピンチ1本だけ選択（フェーダーゾーンなら -1 固定）
+            // 最も深いピンチ1本だけ選択（グー中・フェーダーゾーンなら -1 固定）
             let bestNote = -1, bestDist = PINCH_THRESH
-            if (!inFaderZone) {
+            if (!isFist && !inFaderZone) {
               for (const { fingerTip, note } of PAD_CONFIG) {
                 const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
                 if (dist < bestDist) { bestDist = dist; bestNote = note }
@@ -329,8 +331,9 @@ export default function ARPage() {
         ctx.fillStyle = 'rgba(255,255,255,0.7)'
         ctx.fill()
 
-        // PAD ピンチライン描画（フェーダーゾーン外でのみ）
-        if (index.y >= 0.4) {
+        // PAD ピンチライン描画（グー・フェーダーゾーン外でのみ）
+        const drawIsFist = countExtendedFingers(landmarks) === 0
+        if (!drawIsFist && index.y >= 0.4) {
           let drawBestNote = -1, drawBestDist = PINCH_THRESH
           for (const { fingerTip, note } of PAD_CONFIG) {
             const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
