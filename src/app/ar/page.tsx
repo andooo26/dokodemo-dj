@@ -23,6 +23,8 @@ const FADER_HALF_H   = 0.14  // フェーダートラック半高（正規化）
 const FADER_HIT_X    = 0.06  // 横方向ホバー判定幅（正規化）
 const PINCH_THRESH   = 0.07  // ピンチ判定距離
 const FADER_SENSI    = 200   // 上下移動感度 (正規化Δy → CC value)
+const DECK_HOLD_MS   = 3000  // デッキ切り替えホールド時間(ms)
+const FINGER_EXT_THR = 0.04  // 指伸展判定閾値（正規化）
 
 // --- PAD ---
 const PAD_CONFIG = [
@@ -31,6 +33,13 @@ const PAD_CONFIG = [
   { fingerTip: 16, note: 38, label: 'PAD 3', color: '#f97316' },
   { fingerTip: 20, note: 39, label: 'PAD 4', color: '#a78bfa' },
 ] as const
+
+// 伸展している指の本数（人差し〜小指）
+function countExtendedFingers(lm: { x: number; y: number }[]): number {
+  return (
+    [[8, 5], [12, 9], [16, 13], [20, 17]] as [number, number][]
+  ).filter(([tip, mcp]) => lm[tip].y < lm[mcp].y - FINGER_EXT_THR).length
+}
 
 // MediaPipe スケルトン接続
 const CONNECTIONS = [
@@ -53,7 +62,12 @@ export default function ARPage() {
 
   // PAD 状態
   const activePadsRef  = useRef<Set<number>>(new Set())
+  const [activeDeck, setActiveDeck] = useState(0)
   const activeDeckRef  = useRef(0)
+
+  // デッキ切り替えジェスチャー
+  const deckGestureRef      = useRef<number | null>(null)  // 検出中の指本数
+  const deckGestureStartRef = useRef<number | null>(null)  // 開始タイムスタンプ
 
   // つまみ状態
   const knobValuesRef  = useRef<number[]>([64, 64, 64, 64])
@@ -66,6 +80,8 @@ export default function ARPage() {
   const [activeLabels, setActiveLabels] = useState<string[]>([])
 
   const { status, connect, send } = useMidiBridge()
+  useEffect(() => { activeDeckRef.current = activeDeck }, [activeDeck])
+
   const sendRef = useRef(send)
   useEffect(() => { sendRef.current = send }, [send])
 
@@ -200,6 +216,8 @@ export default function ARPage() {
           grabbedKnobRef.current = -1
           lastYRef.current       = null
         }
+        deckGestureRef.current      = null
+        deckGestureStartRef.current = null
       }
 
       for (const landmarks of results.landmarks) {
@@ -268,6 +286,21 @@ export default function ARPage() {
           }
         }
 
+        // --- デッキ切り替えジェスチャー検出（グー3秒でトグル） ---
+        // PAD/つまみ操作中は無視
+        if (activePadsRef.current.size === 0 && grabbedKnobRef.current < 0) {
+          const isFist = countExtendedFingers(landmarks) === 0
+          if (isFist) {
+            if (deckGestureRef.current === null) {
+              deckGestureRef.current      = 1
+              deckGestureStartRef.current = now
+            }
+          } else {
+            deckGestureRef.current      = null
+            deckGestureStartRef.current = null
+          }
+        }
+
         // スケルトン描画
         ctx.save()
         ctx.strokeStyle = 'rgba(0,255,255,0.5)'
@@ -314,6 +347,52 @@ export default function ARPage() {
 
       // 仮想フェーダー描画（毎フレーム）
       drawFaders(ctx, canvas.width, canvas.height, hoveredKnob)
+
+      // デッキ切り替えプログレス描画
+      if (deckGestureRef.current !== null && deckGestureStartRef.current !== null) {
+        const nextDeck = activeDeckRef.current === 0 ? 1 : 0
+        const elapsed  = now - deckGestureStartRef.current
+        const progress = Math.min(1, elapsed / DECK_HOLD_MS)
+        const cx = canvas.width  * 0.5
+        const cy = canvas.height * 0.5
+        const r  = 48
+
+        // 背景円
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'
+        ctx.fill()
+
+        // プログレスアーク
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress)
+        ctx.strokeStyle = '#fbbf24'
+        ctx.lineWidth   = 5
+        ctx.stroke()
+
+        // ラベル
+        ctx.font      = 'bold 15px sans-serif'
+        ctx.fillStyle = 'white'
+        ctx.textAlign = 'center'
+        ctx.fillText(`→ DECK ${nextDeck + 1}`, cx, cy - 6)
+        ctx.font      = '11px sans-serif'
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'
+        ctx.fillText(`${Math.ceil((DECK_HOLD_MS - elapsed) / 1000)}s`, cx, cy + 12)
+
+        // 3秒経過で確定
+        if (elapsed >= DECK_HOLD_MS) {
+          activeDeckRef.current = nextDeck
+          setActiveDeck(nextDeck)
+          deckGestureRef.current      = null
+          deckGestureStartRef.current = null
+        }
+      }
+
+      // デッキインジケーター（右上）
+      ctx.font      = 'bold 13px sans-serif'
+      ctx.fillStyle = 'rgba(251,191,36,0.9)'
+      ctx.textAlign = 'right'
+      ctx.fillText(`DECK ${activeDeckRef.current + 1}`, canvas.width - 12, 24)
 
       setActiveLabels([...labelSet])
     }
