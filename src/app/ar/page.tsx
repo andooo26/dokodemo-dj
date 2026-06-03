@@ -66,7 +66,7 @@ export default function ARPage() {
   const activeDeckRef  = useRef(0)
 
   // デッキ切り替えジェスチャー
-  const deckGestureRef      = useRef<number | null>(null)  // 検出中の指本数
+  const deckGestureRef      = useRef<'none' | 'holding' | 'completed'>('none')
   const deckGestureStartRef = useRef<number | null>(null)  // 開始タイムスタンプ
 
   // つまみ状態
@@ -216,7 +216,7 @@ export default function ARPage() {
           grabbedKnobRef.current = -1
           lastYRef.current       = null
         }
-        deckGestureRef.current      = null
+        deckGestureRef.current      = 'none'
         deckGestureStartRef.current = null
       }
 
@@ -262,16 +262,20 @@ export default function ARPage() {
 
           // --- PAD ピンチ検出（knob grab 中でなければ・同時押し禁止） ---
           if (grabbedKnobRef.current < 0) {
-            // 最も深いピンチ1本だけ選択
+            // フェーダーエリア（y < 0.4）ではPAD完全無効
+            const inFaderZone = index.y < 0.4
+
+            // 最も深いピンチ1本だけ選択（フェーダーゾーンなら -1 固定）
             let bestNote = -1, bestDist = PINCH_THRESH
-            for (const { fingerTip, note } of PAD_CONFIG) {
-              if (hoveredKnob >= 0) continue
-              const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
-              if (dist < bestDist) { bestDist = dist; bestNote = note }
+            if (!inFaderZone) {
+              for (const { fingerTip, note } of PAD_CONFIG) {
+                const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
+                if (dist < bestDist) { bestDist = dist; bestNote = note }
+              }
             }
 
-            for (const { fingerTip, note, label } of PAD_CONFIG) {
-              if (hoveredKnob >= 0) continue
+            // note_on / note_off（bestNote = -1 なら全解放）
+            for (const { note, label } of PAD_CONFIG) {
               const isActive = note === bestNote
               const was      = activePadsRef.current.has(note)
               if (isActive && !was) {
@@ -291,12 +295,13 @@ export default function ARPage() {
         if (activePadsRef.current.size === 0 && grabbedKnobRef.current < 0) {
           const isFist = countExtendedFingers(landmarks) === 0
           if (isFist) {
-            if (deckGestureRef.current === null) {
-              deckGestureRef.current      = 1
+            if (deckGestureRef.current === 'none') {
+              deckGestureRef.current      = 'holding'
               deckGestureStartRef.current = now
             }
           } else {
-            deckGestureRef.current      = null
+            // グー解放 → 状態リセット
+            deckGestureRef.current      = 'none'
             deckGestureStartRef.current = null
           }
         }
@@ -324,23 +329,23 @@ export default function ARPage() {
         ctx.fillStyle = 'rgba(255,255,255,0.7)'
         ctx.fill()
 
-        // PAD ピンチライン描画
-        let drawBestNote = -1, drawBestDist = PINCH_THRESH
-        for (const { fingerTip, note } of PAD_CONFIG) {
-          if (hoveredKnob >= 0) continue
-          const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
-          if (dist < drawBestDist) { drawBestDist = dist; drawBestNote = note }
-        }
-        for (const { fingerTip, note, color } of PAD_CONFIG) {
-          if (hoveredKnob >= 0) continue
-          const tip    = landmarks[fingerTip]
-          const active = note === drawBestNote
-          ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.1)'
-          ctx.lineWidth   = active ? 3 : 1
-          ctx.beginPath()
-          ctx.moveTo(thumb.x * canvas.width, thumb.y * canvas.height)
-          ctx.lineTo(tip.x   * canvas.width, tip.y   * canvas.height)
-          ctx.stroke()
+        // PAD ピンチライン描画（フェーダーゾーン外でのみ）
+        if (index.y >= 0.4) {
+          let drawBestNote = -1, drawBestDist = PINCH_THRESH
+          for (const { fingerTip, note } of PAD_CONFIG) {
+            const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
+            if (dist < drawBestDist) { drawBestDist = dist; drawBestNote = note }
+          }
+          for (const { fingerTip, note, color } of PAD_CONFIG) {
+            const tip    = landmarks[fingerTip]
+            const active = note === drawBestNote
+            ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.1)'
+            ctx.lineWidth   = active ? 3 : 1
+            ctx.beginPath()
+            ctx.moveTo(thumb.x * canvas.width, thumb.y * canvas.height)
+            ctx.lineTo(tip.x   * canvas.width, tip.y   * canvas.height)
+            ctx.stroke()
+          }
         }
         ctx.restore()
       }
@@ -348,8 +353,8 @@ export default function ARPage() {
       // 仮想フェーダー描画（毎フレーム）
       drawFaders(ctx, canvas.width, canvas.height, hoveredKnob)
 
-      // デッキ切り替えプログレス描画
-      if (deckGestureRef.current !== null && deckGestureStartRef.current !== null) {
+      // デッキ切り替えプログレス描画（'holding' または 'completed'）
+      if (deckGestureRef.current !== 'none' && deckGestureStartRef.current !== null) {
         const nextDeck = activeDeckRef.current === 0 ? 1 : 0
         const elapsed  = now - deckGestureStartRef.current
         const progress = Math.min(1, elapsed / DECK_HOLD_MS)
@@ -377,14 +382,17 @@ export default function ARPage() {
         ctx.fillText(`→ DECK ${nextDeck + 1}`, cx, cy - 6)
         ctx.font      = '11px sans-serif'
         ctx.fillStyle = 'rgba(255,255,255,0.7)'
-        ctx.fillText(`${Math.ceil((DECK_HOLD_MS - elapsed) / 1000)}s`, cx, cy + 12)
+        if (deckGestureRef.current === 'completed') {
+          ctx.fillText('✓ 完了', cx, cy + 12)
+        } else {
+          ctx.fillText(`${Math.ceil((DECK_HOLD_MS - elapsed) / 1000)}s`, cx, cy + 12)
+        }
 
-        // 3秒経過で確定
-        if (elapsed >= DECK_HOLD_MS) {
+        // 3秒経過で確定（'holding' → 'completed'）
+        if (deckGestureRef.current === 'holding' && elapsed >= DECK_HOLD_MS) {
           activeDeckRef.current = nextDeck
           setActiveDeck(nextDeck)
-          deckGestureRef.current      = null
-          deckGestureStartRef.current = null
+          deckGestureRef.current = 'completed'
         }
       }
 
