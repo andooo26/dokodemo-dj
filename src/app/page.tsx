@@ -303,7 +303,7 @@ export default function Controller() {
   const [activeDeck, setActiveDeck] = useState(0)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([64, 64])
-  const { status, log, connect, send } = useMidiBridge()
+  const { status, log, connect, send, failed } = useMidiBridge()
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -339,10 +339,17 @@ export default function Controller() {
                        bg-gray-800 active:bg-gray-600 border border-gray-700
                        disabled:opacity-40 disabled:pointer-events-none transition-colors"
           >
-            {!mounted ? '...' : status === 'connected' ? '再接続' : '接続'}
+            {!mounted ? '...' : status === 'connecting' ? '接続中...' : status === 'connected' ? '再接続' : '再試行'}
           </button>
         </div>
       </div>
+
+      {/* 接続失敗メッセージ */}
+      {failed && (
+        <div className="bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3 text-sm text-gray-400 text-center">
+          サーバーに接続できませんでした。PC側でサーバーが起動しているか確認してください。
+        </div>
+      )}
 
       {/* Turntable */}
       <div className="relative flex justify-center">

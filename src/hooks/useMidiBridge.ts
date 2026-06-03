@@ -10,9 +10,10 @@ export type MidiMsg =
 export type Status = 'disconnected' | 'connecting' | 'connected'
 
 export function useMidiBridge() {
-  const [status, setStatus] = useState<Status>('disconnected')
-  const [log, setLog]       = useState<string[]>([])
-  const socketRef           = useRef<Socket | null>(null)
+  const [status, setStatus]   = useState<Status>('disconnected')
+  const [log, setLog]         = useState<string[]>([])
+  const [failed, setFailed]   = useState(false)
+  const socketRef             = useRef<Socket | null>(null)
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
@@ -22,10 +23,11 @@ export function useMidiBridge() {
   const connect = useCallback(() => {
     socketRef.current?.disconnect()
     setStatus('connecting')
-    const s = io({ query: { role: 'controller' }, transports: ['websocket'], timeout: 5000 })
-    s.on('connect',       () => { setStatus('connected');    addLog('接続しました') })
+    setFailed(false)
+    const s = io({ query: { role: 'controller' }, transports: ['websocket'], timeout: 3000 })
+    s.on('connect',       () => { setStatus('connected');    setFailed(false); addLog('接続しました') })
     s.on('disconnect',    () => { setStatus('disconnected'); addLog('切断しました') })
-    s.on('connect_error', (e) => { setStatus('disconnected'); addLog(`エラー: ${e.message}`) })
+    s.on('connect_error', () => { setStatus('disconnected'); setFailed(true) })
     socketRef.current = s
   }, [addLog])
 
@@ -44,7 +46,10 @@ export function useMidiBridge() {
     // pitch_bend は頻繁すぎるのでログしない
   }, [addLog])
 
+  // マウント時に自動接続
+  useEffect(() => { connect() }, [connect])
+
   useEffect(() => () => { socketRef.current?.disconnect() }, [])
 
-  return { status, log, connect, send }
+  return { status, log, connect, send, failed }
 }

@@ -79,7 +79,7 @@ export default function ARPage() {
   const [cameraError, setCameraError] = useState('')
   const [activeLabels, setActiveLabels] = useState<string[]>([])
 
-  const { status, connect, send } = useMidiBridge()
+  const { status, connect, send, failed } = useMidiBridge()
   useEffect(() => { activeDeckRef.current = activeDeck }, [activeDeck])
 
   const sendRef = useRef(send)
@@ -429,12 +429,19 @@ export default function ARPage() {
       </div>
 
       {/* フッター */}
-      <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-t from-black/70 to-transparent">
-        <span className={`text-sm ${sockColor}`}>● {status}</span>
-        <button onClick={connect}
-          className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700">
-          {status === 'connected' ? '再接続' : '接続'}
-        </button>
+      <div className="absolute bottom-0 left-0 right-0 px-4 py-3 bg-gradient-to-t from-black/70 to-transparent">
+        {failed && (
+          <p className="text-center text-xs text-red-400 mb-2">
+            サーバーに接続できませんでした
+          </p>
+        )}
+        <div className="flex items-center justify-between">
+          <span className={`text-sm ${sockColor}`}>● {status}</span>
+          <button onClick={connect}
+            className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700">
+            {status === 'connecting' ? '接続中...' : status === 'connected' ? '再接続' : '再試行'}
+          </button>
+        </div>
       </div>
 
       {/* 読み込み */}
