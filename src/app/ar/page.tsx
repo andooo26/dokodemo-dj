@@ -265,13 +265,13 @@ export default function ARPage() {
             // 最も深いピンチ1本だけ選択
             let bestNote = -1, bestDist = PINCH_THRESH
             for (const { fingerTip, note } of PAD_CONFIG) {
-              if (fingerTip === 8 && hoveredKnob >= 0) continue
+              if (hoveredKnob >= 0) continue
               const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
               if (dist < bestDist) { bestDist = dist; bestNote = note }
             }
 
             for (const { fingerTip, note, label } of PAD_CONFIG) {
-              if (fingerTip === 8 && hoveredKnob >= 0) continue
+              if (hoveredKnob >= 0) continue
               const isActive = note === bestNote
               const was      = activePadsRef.current.has(note)
               if (isActive && !was) {
@@ -327,12 +327,12 @@ export default function ARPage() {
         // PAD ピンチライン描画
         let drawBestNote = -1, drawBestDist = PINCH_THRESH
         for (const { fingerTip, note } of PAD_CONFIG) {
-          if (fingerTip === 8 && hoveredKnob >= 0) continue
+          if (hoveredKnob >= 0) continue
           const dist = Math.hypot(thumb.x - landmarks[fingerTip].x, thumb.y - landmarks[fingerTip].y)
           if (dist < drawBestDist) { drawBestDist = dist; drawBestNote = note }
         }
         for (const { fingerTip, note, color } of PAD_CONFIG) {
-          if (fingerTip === 8 && hoveredKnob >= 0) continue
+          if (hoveredKnob >= 0) continue
           const tip    = landmarks[fingerTip]
           const active = note === drawBestNote
           ctx.strokeStyle = active ? color : 'rgba(255,255,255,0.1)'
