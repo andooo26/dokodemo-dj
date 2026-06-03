@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import Link from 'next/link'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
+import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 
 // --- Constants ---
 
@@ -235,15 +235,6 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
-function StatusDot({ status }: { status: Status }) {
-  const cls: Record<Status, string> = {
-    connected:    'bg-gray-300',
-    connecting:   'bg-gray-400 animate-pulse',
-    disconnected: 'bg-gray-600',
-  }
-  return <span className={`inline-block w-2 h-2 rounded-full ${cls[status]}`} />
-}
-
 function Pad({ note, label, onNoteOn, onNoteOff }: {
   note: number; label: string
   onNoteOn: (n: number) => void
@@ -311,36 +302,17 @@ export default function Controller() {
     <main className="min-h-screen bg-gray-950 text-white px-4 py-6 max-w-md mx-auto flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <h1 className="text-lg font-bold">どこでもDJ</h1>
-        <StatusDot status={status} />
-        <span className="text-sm text-gray-400">{status}</span>
-        <div className="ml-auto flex gap-2">
-          <Link
-            href="/ar"
-            className="min-h-[44px] px-4 rounded-xl text-sm font-medium touch-manipulation
-                       bg-gray-800 active:bg-gray-600 border border-gray-700 transition-colors
-                       flex items-center"
-          >
-            AR
-          </Link>
-          <Link
-            href="/output"
-            className="min-h-[44px] px-4 rounded-xl text-sm font-medium touch-manipulation
-                       bg-gray-800 active:bg-gray-600 border border-gray-700 transition-colors
-                       flex items-center"
-          >
-            PC画面
-          </Link>
-          <button
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-lg font-bold flex-shrink-0">どこでもDJ</h1>
+        <div className="flex gap-2 flex-shrink-0">
+          <LinkButton href="/ar">AR</LinkButton>
+          <LinkButton href="/output">PC画面</LinkButton>
+          <ConnectButton
             disabled={!mounted || status === 'connecting'}
+            status={status}
             onClick={() => connect()}
-            className="min-h-[44px] px-5 rounded-xl text-sm font-medium touch-manipulation
-                       bg-gray-800 active:bg-gray-600 border border-gray-700
-                       disabled:opacity-40 disabled:pointer-events-none transition-colors"
-          >
-            {!mounted ? '...' : status === 'connecting' ? '接続中...' : status === 'connected' ? '再接続' : '再試行'}
-          </button>
+            mounted={mounted}
+          />
         </div>
       </div>
 

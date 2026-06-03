@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
+import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import type { HandLandmarker } from '@mediapipe/tasks-vision'
 
 // --- MediaPipe ---
@@ -433,9 +433,7 @@ export default function ARPage() {
 
       {/* ヘッダー */}
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent">
-        <Link href="/" className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700">
-          ← コントローラーに戻る
-        </Link>
+        <LinkButton href="/">← コントローラーに戻る</LinkButton>
         <span className="text-white text-sm font-bold">ARモード</span>
       </div>
 
@@ -448,10 +446,12 @@ export default function ARPage() {
         )}
         <div className="flex items-center justify-between">
           <span className={`text-sm ${sockColor}`}>● {status}</span>
-          <button onClick={connect}
-            className="px-3 py-1.5 rounded-xl bg-gray-800/80 text-white text-sm border border-gray-700">
-            {status === 'connecting' ? '接続中...' : status === 'connected' ? '再接続' : '再試行'}
-          </button>
+          <ConnectButton
+            disabled={status === 'connecting'}
+            status={status}
+            onClick={connect}
+            size="small"
+          />
         </div>
       </div>
 
@@ -467,9 +467,7 @@ export default function ARPage() {
       {cameraError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 px-8 text-center">
           <p className="text-red-400">{cameraError}</p>
-          <Link href="/" className="px-4 py-2 rounded-xl bg-gray-800 text-white text-sm border border-gray-700">
-            タッチUIに戻る
-          </Link>
+          <LinkButton href="/">タッチUIに戻る</LinkButton>
         </div>
       )}
     </div>
