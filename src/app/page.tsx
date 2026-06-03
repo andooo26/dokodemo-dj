@@ -299,14 +299,13 @@ export default function Controller() {
   useEffect(() => { setMounted(true) }, [])
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white px-4 py-6 max-w-md mx-auto flex flex-col gap-6">
+    <main className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6">
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-lg font-bold flex-shrink-0">どこでもDJ</h1>
         <div className="flex gap-2 flex-shrink-0">
           <LinkButton href="/ar">AR</LinkButton>
-          <LinkButton href="/output">PC画面</LinkButton>
           <ConnectButton
             disabled={!mounted || status === 'connecting'}
             status={status}
@@ -324,8 +323,8 @@ export default function Controller() {
       )}
 
       {/* Turntable */}
-      <div className="relative flex justify-center">
-        <div className="w-3/5">
+      <div className="relative flex justify-center flex-1">
+        <div className="w-full max-w-[280px]">
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">

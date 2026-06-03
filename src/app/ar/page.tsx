@@ -412,8 +412,6 @@ export default function ARPage() {
     return () => cancelAnimationFrame(rafRef.current)
   }, [isReady])
 
-  const sockColor = status === 'connected' ? 'text-green-400' : 'text-gray-400'
-
   return (
     <div className="relative w-screen bg-black overflow-hidden font-sans" style={{ height: '100dvh' }}>
 
@@ -444,8 +442,7 @@ export default function ARPage() {
             サーバーに接続できませんでした
           </p>
         )}
-        <div className="flex items-center justify-between">
-          <span className={`text-sm ${sockColor}`}>● {status}</span>
+        <div className="flex items-center justify-end">
           <ConnectButton
             disabled={status === 'connecting'}
             status={status}
