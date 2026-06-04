@@ -24,7 +24,7 @@ const FADER_HALF_H   = 0.14  // フェーダートラック半高（正規化）
 const FADER_HIT_X    = 0.06  // 横方向ホバー判定幅（正規化）
 const PINCH_THRESH   = 0.07  // ピンチ判定距離
 const FADER_SENSI    = 200   // 上下移動感度 (正規化Δy → CC value)
-const DECK_HOLD_MS   = 3000  // デッキ切り替えホールド時間(ms)
+const DECK_HOLD_MS   = 1000  // デッキ切り替えホールド時間(ms)
 const FINGER_EXT_THR = 0.04  // 指伸展判定閾値（正規化）
 
 // --- PAD ---
