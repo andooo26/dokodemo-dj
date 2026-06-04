@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
-import Link from 'next/link'
+import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 // --- Types ---
 
@@ -68,17 +68,23 @@ function KnobMonitor({ value, label }: { value: number; label: string }) {
 
 function TurntableMonitor({ angle, stopped }: { angle: number; stopped: boolean }) {
   return (
-    <div className={`relative rounded-full w-3/4 mx-auto aspect-square border-4 transition-colors duration-75
-                     ${stopped ? 'border-gray-400 bg-gray-700' : 'border-gray-700 bg-gray-800'}`}>
+    <div className={`relative rounded-full w-3/4 mx-auto aspect-square border-4 transition-colors duration-75 shadow-lg
+                     ${stopped ? 'border-gray-300 shadow-blue-500/20' : 'border-gray-600 shadow-gray-950'}`}
+      style={{
+        background: stopped
+          ? 'radial-gradient(circle at 30% 30%, #4a5568, #1a202c)'
+          : 'radial-gradient(circle at 30% 30%, #2d3748, #0d0d0d)'
+      }}>
       <div
         className="absolute inset-0 pointer-events-none"
         style={{ transform: `rotate(${angle}deg)` }}
       >
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-1.5 h-6 bg-gray-400 rounded-full" />
+        <div className={`absolute top-2 left-1/2 -translate-x-1/2 w-1.5 h-5 rounded-full shadow-md
+          ${stopped ? 'bg-blue-300 shadow-blue-300/50' : 'bg-gray-300 shadow-gray-400/50'}`} />
       </div>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className={`w-8 h-8 rounded-full border-2 transition-colors
-                         ${stopped ? 'bg-gray-300 border-gray-200' : 'bg-gray-600 border-gray-500'}`} />
+        <div className="w-6 h-6 rounded-full border-2 border-gray-400 bg-gradient-to-br from-gray-300 to-gray-500 shadow-md" />
+        <div className="absolute w-3 h-3 rounded-full bg-white border border-gray-300" />
       </div>
       {stopped && (
         <div className="absolute inset-0 flex items-end justify-center pb-3 pointer-events-none">
@@ -233,19 +239,12 @@ export default function OutputPage() {
     return () => { socket.disconnect() }
   }, [])
 
-  const sockColor = sockStatus === 'connected' ? 'text-white' : 'text-gray-500'
-  const midiColor = midiPorts.length > 0 ? 'text-white' : 'text-yellow-400'
-
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col font-sans overflow-hidden">
 
       {/* Header bar */}
       <header className="flex items-center gap-6 px-6 py-3 border-b border-gray-800 shrink-0">
         <h1 className="text-xl font-bold">どこでもDJ</h1>
-        <span className={`text-sm ${sockColor}`}>
-          ● {sockStatus === 'connected' ? 'スマホ接続中' : '未接続'}
-        </span>
-        <span className={`text-sm ${midiColor}`}>♪ {midiStatus}</span>
         <div className="ml-auto flex items-center gap-3">
           {midiPorts.length === 0 ? (
             <span className="text-sm text-yellow-400">MIDI デバイスなし</span>
@@ -266,13 +265,6 @@ export default function OutputPage() {
               ))}
             </select>
           )}
-          <Link
-            href="/"
-            className="px-4 py-1.5 rounded-lg text-sm font-medium
-                       bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
-          >
-            スマホ版
-          </Link>
         </div>
       </header>
 
@@ -292,28 +284,27 @@ export default function OutputPage() {
                 <div className="absolute right-0 top-0 bottom-0 py-1">
                   <PitchFaderMonitor value={pitchDeck1} />
                 </div>
-              </div>
-              <div className="flex gap-2 justify-center">
-                {[{ label: 'CUE', active: cueDeck1 }, { label: '▷/‖', active: playDeck1 }].map(({ label, active }) => (
-                  <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
-                                               ${active ? 'bg-white text-gray-950 border-white' : 'bg-gray-800 text-gray-600 border-gray-700'}`}>
-                    {label}
-                  </div>
-                ))}
+                <div className="absolute left-0 bottom-0 flex flex-col gap-2">
+                  <CuePlayButton channel={0} active={cueDeck1} />
+                  <PlayStopButton channel={0} active={playDeck1} />
+                </div>
               </div>
               <div className="grid grid-cols-4 gap-3">
-                {PAD_NOTES.map((note, i) => (
-                  <div
-                    key={note}
-                    className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
-                                border-2 transition-all duration-75
-                                ${activePadsDeck1.has(note)
-                                  ? 'bg-white text-gray-950 border-white scale-95'
-                                  : 'bg-gray-800 text-gray-600 border-gray-700'}`}
-                  >
-                    {i + 1}
-                  </div>
-                ))}
+                {PAD_NOTES.map((note, i) => {
+                  const colors = ['border-red-600', 'border-cyan-400', 'border-lime-400', 'border-purple-600']
+                  const activeBgs = ['bg-red-600', 'bg-cyan-400', 'bg-lime-400', 'bg-purple-600']
+                  return (
+                    <div
+                      key={note}
+                      className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
+                                  border-2 transition-all duration-75 bg-black
+                                  ${activePadsDeck1.has(note)
+                                    ? `${activeBgs[i]} text-gray-950 scale-95`
+                                    : `${colors[i]} text-gray-600`}`}
+                    >
+                    </div>
+                  )
+                })}
               </div>
               <div className="grid grid-cols-4 gap-1">
                 {EQ_LABELS.map((label, i) => (
@@ -330,28 +321,27 @@ export default function OutputPage() {
                 <div className="absolute right-0 top-0 bottom-0 py-1">
                   <PitchFaderMonitor value={pitchDeck2} />
                 </div>
-              </div>
-              <div className="flex gap-2 justify-center">
-                {[{ label: 'CUE', active: cueDeck2 }, { label: '▷/‖', active: playDeck2 }].map(({ label, active }) => (
-                  <div key={label} className={`flex-1 py-1 rounded-lg text-xs font-semibold text-center border transition-colors duration-75
-                                               ${active ? 'bg-white text-gray-950 border-white' : 'bg-gray-800 text-gray-600 border-gray-700'}`}>
-                    {label}
-                  </div>
-                ))}
+                <div className="absolute left-0 bottom-0 flex flex-col gap-2">
+                  <CuePlayButton channel={1} active={cueDeck2} />
+                  <PlayStopButton channel={1} active={playDeck2} />
+                </div>
               </div>
               <div className="grid grid-cols-4 gap-3">
-                {PAD_NOTES.map((note, i) => (
-                  <div
-                    key={note}
-                    className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
-                                border-2 transition-all duration-75
-                                ${activePadsDeck2.has(note)
-                                  ? 'bg-white text-gray-950 border-white scale-95'
-                                  : 'bg-gray-800 text-gray-600 border-gray-700'}`}
-                  >
-                    {i + 1}
-                  </div>
-                ))}
+                {PAD_NOTES.map((note, i) => {
+                  const colors = ['border-red-600', 'border-cyan-400', 'border-lime-400', 'border-purple-600']
+                  const activeBgs = ['bg-red-600', 'bg-cyan-400', 'bg-lime-400', 'bg-purple-600']
+                  return (
+                    <div
+                      key={note}
+                      className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
+                                  border-2 transition-all duration-75 bg-black
+                                  ${activePadsDeck2.has(note)
+                                    ? `${activeBgs[i]} text-gray-950 scale-95`
+                                    : `${colors[i]} text-gray-600`}`}
+                    >
+                    </div>
+                  )
+                })}
               </div>
               <div className="grid grid-cols-4 gap-1">
                 {EQ_LABELS.map((label, i) => (

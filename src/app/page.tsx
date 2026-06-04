@@ -17,10 +17,10 @@ const EQ_KNOBS = [
 ]
 
 const PADS = [
-  { note: 36, label: '1' },
-  { note: 37, label: '2' },
-  { note: 38, label: '3' },
-  { note: 39, label: '4' },
+  { note: 36, label: '', color: 'red' },
+  { note: 37, label: '', color: 'cyan' },
+  { note: 38, label: '', color: 'lime' },
+  { note: 39, label: '', color: 'purple' },
 ]
 
 // --- Components ---
@@ -52,8 +52,13 @@ function Turntable({ channel, send }: {
   return (
     <div
       className={`relative rounded-full w-full aspect-square select-none touch-none
-                  border-4 transition-colors duration-75
-                  ${pressed ? 'border-gray-400 bg-gray-700' : 'border-gray-700 bg-gray-800'}`}
+                  border-4 transition-colors duration-75 shadow-2xl
+                  ${pressed ? 'border-gray-300 shadow-blue-500/30' : 'border-gray-600 shadow-gray-950'}`}
+      style={{
+        background: pressed
+          ? 'radial-gradient(circle at 30% 30%, #4a5568, #1a202c)'
+          : 'radial-gradient(circle at 30% 30%, #2d3748, #0d0d0d)'
+      }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         const rect = e.currentTarget.getBoundingClientRect()
@@ -89,12 +94,13 @@ function Turntable({ channel, send }: {
         className="absolute inset-0 pointer-events-none"
         style={{ transform: `rotate(${angle}deg)` }}
       >
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-2 h-10 bg-gray-400 rounded-full" />
+        <div className={`absolute top-3 left-1/2 -translate-x-1/2 w-2.5 h-12 rounded-full shadow-lg
+          ${pressed ? 'bg-blue-400 shadow-blue-400/50' : 'bg-gray-300 shadow-gray-400/50'}`} />
       </div>
       {/* 中央ハブ */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className={`w-14 h-14 rounded-full border-2 transition-colors
-                         ${pressed ? 'bg-gray-300 border-gray-200' : 'bg-gray-600 border-gray-500'}`} />
+        <div className="w-16 h-16 rounded-full border-3 border-gray-400 bg-gradient-to-br from-gray-300 to-gray-500 shadow-lg" />
+        <div className="absolute w-8 h-8 rounded-full bg-white border-2 border-gray-300" />
       </div>
     </div>
   )
@@ -235,17 +241,32 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
-function Pad({ note, label, onNoteOn, onNoteOff }: {
-  note: number; label: string
+function Pad({ note, label, color, onNoteOn, onNoteOff }: {
+  note: number; label: string; color: string
   onNoteOn: (n: number) => void
   onNoteOff: (n: number) => void
 }) {
   const [pressed, setPressed] = useState(false)
+  const colorMap: Record<string, string> = {
+    red: 'border-red-600',
+    cyan: 'border-cyan-400',
+    lime: 'border-lime-400',
+    purple: 'border-purple-600',
+  }
+  const activeBgs: Record<string, string> = {
+    red: 'bg-red-600',
+    cyan: 'bg-cyan-400',
+    lime: 'bg-lime-400',
+    purple: 'bg-purple-600',
+  }
+  const borderColor = colorMap[color] || 'border-gray-700'
+  const activeBg = activeBgs[color] || 'bg-gray-800'
+
   return (
     <button
-      className={`rounded-2xl aspect-square text-gray-200 font-semibold text-2xl select-none touch-none
-                  transition-all duration-75 border border-gray-700
-                  ${pressed ? 'bg-gray-400 scale-95' : 'bg-gray-800'}`}
+      className={`rounded-2xl aspect-square font-semibold text-2xl select-none touch-none
+                  transition-all duration-75 border bg-black
+                  ${pressed ? `${activeBg} scale-95 text-gray-950` : `${borderColor} text-gray-600`}`}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setPressed(true)
@@ -342,11 +363,12 @@ export default function Controller() {
 
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
-        {PADS.map(({ note, label }) => (
+        {PADS.map(({ note, color }) => (
           <Pad
             key={note}
             note={note}
-            label={label}
+            label=""
+            color={color}
             onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
             onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />
