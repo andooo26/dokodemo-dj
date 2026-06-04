@@ -5,6 +5,7 @@ import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import type { HandLandmarker } from '@mediapipe/tasks-vision'
 
+
 // --- MediaPipe ---
 
 const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
@@ -399,11 +400,11 @@ export default function ARPage() {
         }
       }
 
-      // デッキインジケーター（右上）
-      ctx.font      = 'bold 13px sans-serif'
+      // デッキインジケーター（左下）
+      ctx.font      = 'bold 17px sans-serif'
       ctx.fillStyle = 'rgba(251,191,36,0.9)'
-      ctx.textAlign = 'right'
-      ctx.fillText(`DECK ${activeDeckRef.current + 1}`, canvas.width - 12, 24)
+      ctx.textAlign = 'left'
+      ctx.fillText(`DECK ${activeDeckRef.current + 1}`, 12, canvas.height - 12)
 
       setActiveLabels([...labelSet])
     }
@@ -442,7 +443,8 @@ export default function ARPage() {
             サーバーに接続できませんでした
           </p>
         )}
-        <div className="flex items-center justify-end">
+        <div className="flex flex-col items-center gap-3">
+          <ARControlButtons activeDeck={activeDeck} send={send} />
           <ConnectButton
             disabled={status === 'connecting'}
             status={status}
@@ -467,6 +469,44 @@ export default function ARPage() {
           <LinkButton href="/">タッチUIに戻る</LinkButton>
         </div>
       )}
+    </div>
+  )
+}
+
+function ARControlButtons({ activeDeck, send }: { activeDeck: number; send: (msg: any) => void }) {
+  const [cuePressedRef, setCuePressed] = useState(false)
+  const [playPressedRef, setPlayPressed] = useState(false)
+
+  return (
+    <div className="flex gap-3">
+      <button
+        className={`w-12 h-12 rounded-full text-xs font-semibold select-none touch-none border border-gray-700
+                    transition-all duration-75
+                    ${cuePressedRef ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setCuePressed(true)
+          send({ type: 'note_on', channel: activeDeck, note: 47, velocity: 127 })
+        }}
+        onPointerUp={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: 47 }) }}
+        onPointerCancel={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: 47 }) }}
+      >
+        CUE
+      </button>
+      <button
+        className={`w-12 h-12 rounded-full text-sm font-semibold select-none touch-none border border-gray-700
+                    transition-all duration-75
+                    ${playPressedRef ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setPlayPressed(true)
+          send({ type: 'note_on', channel: activeDeck, note: 0, velocity: 127 })
+        }}
+        onPointerUp={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: 0 }) }}
+        onPointerCancel={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: 0 }) }}
+      >
+        START
+      </button>
     </div>
   )
 }
