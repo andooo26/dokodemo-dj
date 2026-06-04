@@ -212,17 +212,21 @@ export default function OutputPage() {
         else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
       }
 
+      // ログ出力（MIDI出力の試行）
+      const bytes = toBytes(msg)
+      if (bytes.length) {
+        const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')
+        addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
+      }
+
       // MIDI 出力
       const out = outputsRef.current.get(selectedRef.current)
       if (!out) {
-        addLog('MIDIポートを選択してください')
+        addLog('MIDI未指定')
         return
       }
-      const bytes = toBytes(msg)
       if (bytes.length) {
         out.send(bytes)
-        const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')
-        addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
       }
     })
 
