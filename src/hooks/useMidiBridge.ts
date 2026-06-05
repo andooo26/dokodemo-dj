@@ -40,10 +40,10 @@ export function useMidiBridge() {
       return
     }
     socketRef.current.emit('midi', msg)
-    if      (msg.type === 'note_on')  addLog(`Note On  ${msg.note}`)
-    else if (msg.type === 'note_off') addLog(`Note Off ${msg.note}`)
-    else if (msg.type === 'cc')       addLog(`CC ${msg.controller}  ${msg.value}`)
-    // pitch_bend は頻繁すぎるのでログしない
+    if      (msg.type === 'note_on')    addLog(`Note On  ${msg.note}`)
+    else if (msg.type === 'note_off')   addLog(`Note Off ${msg.note}`)
+    else if (msg.type === 'cc')         addLog(`CC ${msg.controller}  ${msg.value}`)
+    else if (msg.type === 'pitch_bend') addLog(`Pitch Bend ${msg.value}`)
   }, [addLog])
 
   // マウント時に自動接続
