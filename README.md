@@ -1,36 +1,134 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# どこでもDJ
+## 概要
+スマホをDJコントローラとして使用することができるWebアプリケーション
+一般的なタッチUIに加え、ARジェスチャで操作ができる機能も備える
 
-## Getting Started
+## 使用技術
+| 項目               | 内容                        |
+| ------------------ | --------------------------- |
+| フレームワーク     | Next.js 16.2.6 (App Router) |
+| UI                 | React 19 + Tailwind CSS     |
+| リアルタイム通信   | Socket.io                   |
+| MIDI               | Web MIDI API                |
+| ハンドトラッキング | @mediapipe/tasks-vision     |
+| サーバー           | Node.js                     |
+| 言語               | TypeScript                  |
 
-First, run the development server:
+## 技術仕様
+### サーバ
+- HTTPS化 : mkcertにて自己署名証明書
+- ポート : 3000 (HTTPS), 3001 (HTTP→HTTPSリダイレクト)
+- Socket.io : controller(スマホ)/output(PC)
+- リレー : controllerから受信したMIDI信号をoutputに転送
+#### MIDIメッセージ仕様
+#### メッセージ型 (MidiMsg)
+```
+type MidiMsg =
+ | { type: 'note_on'; channel: number; note: number; velocity: number }
+ | { type: 'note_off'; channel: number; note: number }
+ | { type: 'cc'; channel: number; controller: number; value:
+number }
+ | { type: 'pitch_bend'; channel: number; value: number }
+ ```
+#### チャンネル
+- 0 : DECK1
+- 1 : DECK2
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+#### ノート,CC
+| 操作          | タイプ | 番号 |
+| ------------- | ------ | ---- |
+| タンテ停止    | note   | 46   |
+| CUE           | note   | 47   |
+| PLAY/PAUSE    | note   | 0    |
+| PAD 1         | note   | 36   |
+| PAD 2         | note   | 37   |
+| PAD 3         | note   | 38   |
+| PAD 4         | note   | 39   |
+| TEMPOフェーダ | CC     | 9    |
+| HIGH          | CC     | 10   |
+| MID           | CC     | 11   |
+| LOW           | CC     | 12   |
+| FILTER        | CC     | 13   |
+
+#### useMidiBridgeフック(src/hooks/useMidiBridge.ts)
+- 返り値
+
+```typescript
+{ status, log, connect, send, failed }
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| 項目    | 型                                              | 内容               |
+| ------- | ----------------------------------------------- | ------------------ |
+| status  | `'disconnected' \| 'connecting' \| 'connected'` | 接続状態           |
+| log     | `string[]`                                      | 最新30件のログ     |
+| connect | `() => void`                                    | 手動再接続         |
+| send    | `(msg: MidiMsg) => void`                        | MIDI送信           |
+| failed  | `boolean`                                       | 自動接続失敗フラグ |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+#### ARモード (src/app/ar/page.tsx)
 
-## Learn More
+##### MediaPipe 設定
 
-To learn more about Next.js, take a look at the following resources:
+| 設定       | 値                     |
+| ---------- | ---------------------- |
+| モデル     | HandLandmarker float16 |
+| 実行モード | VIDEO                  |
+| 最大手数   | 2                      |
+| WASM       | jsDelivr CDN           |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+##### ジェスチャー仕様
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+###### PADピンチ
+- **検出**: 親指と各指先の距離 < `PINCH_THRESH (0.07)`
+- **有効エリア**: 画面下半分 (index.y ≥ 0.4)
+- **排他制御**: 最も近い指1本のみ有効 (best-pinch-wins)
+- **無効条件**: グー状態 / フェーダーエリア(y < 0.4) / フェーダーグラブ中
 
-## Deploy on Vercel
+###### EQフェーダー操作
+- **検出**: 人差し指先端がKNOB_ZONE矩形内に進入
+- **操作**: 人差し指+親指ピンチ → 指のY移動でCC送信
+- **感度**: `FADER_SENSI = 200`
+- **デッキ別保存**: `eqValuesRef[2][4]` で独立管理
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+###### DECKグーポーズ
+- **検出**: 全指屈曲 (`countExtendedFingers() === 0`)
+- **動作**: 1秒ホールドでDECKをトグル (1→2→1)
+- **状態管理**: `'none' → 'holding' → 'completed'`
+- **排他制御**: PAD/フェーダー操作中は無視
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+###### 表示レイヤー
+- カメラ映像 (background)
+- Canvas オーバーレイ: スケルトン / フェーダーUI / ピンチライン / DECK表示 / プログレス円
+
+##### フェーダーゾーン配置 (正規化座標)
+
+| ゾーン | X    | Y中心 |
+| ------ | ---- | ----- |
+| HIGH   | 0.20 | 0.22  |
+| MID    | 0.40 | 0.22  |
+| LOW    | 0.60 | 0.22  |
+| FILTER | 0.80 | 0.22  |
+
+---
+
+## 起動方法
+
+```bash
+# 開発
+npm run dev
+
+# 本番(スマホ対応)
+npm run mobile
+スマホUI : https://<PCのIP>:3000/
+ARモード : https://<PCのIP>:3000/ar   
+PC版UI : https://localhost:3000/output
+```
+
+### HTTPS証明書セットアップ
+```bash
+brew install mkcert
+mkcert localhost <PCのIP>
+# → localhost+1.pem, localhost+1-key.pem をルートに配置
+```
