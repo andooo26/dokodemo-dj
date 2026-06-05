@@ -71,7 +71,7 @@ export default function ARPage() {
   const deckGestureStartRef = useRef<number | null>(null)  // 開始タイムスタンプ
 
   // つまみ状態
-  const knobValuesRef  = useRef<number[]>([64, 64, 64, 64])
+  const eqValuesRef    = useRef([[64,64,64,64],[64,64,64,64]])
   const grabbedKnobRef = useRef<number>(-1)   // -1 = none
   const lastYRef       = useRef<number | null>(null)
 
@@ -138,7 +138,7 @@ export default function ARPage() {
         const trackTop = (ny - FADER_HALF_H) * h
         const trackBot = (ny + FADER_HALF_H) * h
         const trackH   = trackBot - trackTop
-        const val      = knobValuesRef.current[i]
+        const val      = eqValuesRef.current[activeDeckRef.current][i]
         const grabbed  = grabbedKnobRef.current === i
         const hovered  = hoveredIdx === i
 
@@ -248,10 +248,10 @@ export default function ARPage() {
           const delta = lastYRef.current !== null ? (lastYRef.current - index.y) * FADER_SENSI : 0
           lastYRef.current = index.y
 
-          let v = Math.round(knobValuesRef.current[hoveredKnob] + delta)
+          let v = Math.round(eqValuesRef.current[activeDeckRef.current][hoveredKnob] + delta)
           v = Math.max(0, Math.min(127, v))
           if (Math.abs(v - 64) <= 3) v = 64
-          knobValuesRef.current[hoveredKnob] = v
+          eqValuesRef.current[activeDeckRef.current][hoveredKnob] = v
           sendRef.current({ type: 'cc', channel: activeDeckRef.current, controller: KNOB_ZONES[hoveredKnob].cc, value: v })
           labelSet.add(KNOB_ZONES[hoveredKnob].label)
         } else {
