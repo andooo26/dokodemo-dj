@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import type { HandLandmarker } from '@mediapipe/tasks-vision'
+import { PADS, KNOBS, CUE_NOTE, PLAY_NOTE } from '@/core/mapping'
 
 
 // --- MediaPipe ---
@@ -12,12 +13,11 @@ const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14
 const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
 // --- 仮想つまみゾーン (正規化座標) ---
-const KNOB_ZONES = [
-  { label: 'HIGH',   cc: 10, nx: 0.20, ny: 0.22 },
-  { label: 'MID',    cc: 11, nx: 0.40, ny: 0.22 },
-  { label: 'LOW',    cc: 12, nx: 0.60, ny: 0.22 },
-  { label: 'FILTER', cc: 13, nx: 0.80, ny: 0.22 },
-] as const
+// 番号と色は mapping が持ち、ここは画面上の配置だけを持つ
+const KNOB_POS = [0.20, 0.40, 0.60, 0.80]
+const KNOB_ZONES = KNOBS.map((k, i) => ({
+  label: k.id, cc: k.cc, nx: KNOB_POS[i], ny: 0.22,
+}))
 
 const FADER_HALF_H   = 0.14  // フェーダー半高
 const FADER_HIT_X    = 0.06  // ホバー判定幅
@@ -27,12 +27,14 @@ const DECK_HOLD_MS   = 1000  // デッキ切り替えの長押し時間
 const FINGER_EXT_THR = 0.04  // 指伸展の閾値
 
 // --- PAD ---
-const PAD_CONFIG = [
-  { fingerTip: 8,  note: 36, label: 'PAD 1', color: '#60a5fa' },
-  { fingerTip: 12, note: 37, label: 'PAD 2', color: '#34d399' },
-  { fingerTip: 16, note: 38, label: 'PAD 3', color: '#f97316' },
-  { fingerTip: 20, note: 39, label: 'PAD 4', color: '#a78bfa' },
-] as const
+// 対応する指先だけがAR固有。ノートと色は mapping から引く
+const PAD_FINGER_TIPS = [8, 12, 16, 20]
+const PAD_CONFIG = PADS.map((pad, i) => ({
+  fingerTip: PAD_FINGER_TIPS[i],
+  note:      pad.note,
+  label:     `PAD ${i + 1}`,
+  color:     pad.hex,
+}))
 
 // 伸ばしている指の本数
 function countExtendedFingers(lm: { x: number; y: number }[]): number {
@@ -484,10 +486,10 @@ function ARControlButtons({ activeDeck, send }: { activeDeck: number; send: (msg
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId)
           setCuePressed(true)
-          send({ type: 'note_on', channel: activeDeck, note: 47, velocity: 127 })
+          send({ type: 'note_on', channel: activeDeck, note: CUE_NOTE, velocity: 127 })
         }}
-        onPointerUp={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: 47 }) }}
-        onPointerCancel={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: 47 }) }}
+        onPointerUp={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: CUE_NOTE }) }}
+        onPointerCancel={() => { setCuePressed(false); send({ type: 'note_off', channel: activeDeck, note: CUE_NOTE }) }}
       >
         CUE
       </button>
@@ -498,10 +500,10 @@ function ARControlButtons({ activeDeck, send }: { activeDeck: number; send: (msg
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId)
           setPlayPressed(true)
-          send({ type: 'note_on', channel: activeDeck, note: 0, velocity: 127 })
+          send({ type: 'note_on', channel: activeDeck, note: PLAY_NOTE, velocity: 127 })
         }}
-        onPointerUp={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: 0 }) }}
-        onPointerCancel={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: 0 }) }}
+        onPointerUp={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: PLAY_NOTE }) }}
+        onPointerCancel={() => { setPlayPressed(false); send({ type: 'note_off', channel: activeDeck, note: PLAY_NOTE }) }}
       >
         START
       </button>

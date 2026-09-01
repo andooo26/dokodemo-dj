@@ -4,24 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
-
-// --- Constants ---
-
-const TURNTABLE_STOP_NOTE = 46
-const PITCH_CC            = 9
-const EQ_KNOBS = [
-  { label: 'HIGH',   cc: 10 },
-  { label: 'MID',    cc: 11 },
-  { label: 'LOW',    cc: 12 },
-  { label: 'FILTER', cc: 13 },
-]
-
-const PADS = [
-  { note: 36, label: '', color: 'red' },
-  { note: 37, label: '', color: 'cyan' },
-  { note: 38, label: '', color: 'lime' },
-  { note: 39, label: '', color: 'purple' },
-]
+import {
+  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, PITCH_CC,
+} from '@/core/mapping'
 
 // --- Components ---
 
@@ -209,10 +194,10 @@ function CuePlayButton({ channel, send }: {
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setPressed(true)
-        send({ type: 'note_on', channel, note: 47, velocity: 127 })
+        send({ type: 'note_on', channel, note: CUE_NOTE, velocity: 127 })
       }}
-      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: 47 }) }}
-      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: 47 }) }}
+      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: CUE_NOTE }) }}
+      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: CUE_NOTE }) }}
     >
       CUE
     </button>
@@ -231,36 +216,23 @@ function PlayStopButton({ channel, send }: {
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setPressed(true)
-        send({ type: 'note_on', channel, note: 0, velocity: 127 })
+        send({ type: 'note_on', channel, note: PLAY_NOTE, velocity: 127 })
       }}
-      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: 0 }) }}
-      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: 0 }) }}
+      onPointerUp={() => { setPressed(false); send({ type: 'note_off', channel, note: PLAY_NOTE }) }}
+      onPointerCancel={() => { setPressed(false); send({ type: 'note_off', channel, note: PLAY_NOTE }) }}
     >
       ▷/‖
     </button>
   )
 }
 
-function Pad({ note, label, color, onNoteOn, onNoteOff }: {
-  note: number; label: string; color: string
+function Pad({ note, label, border, activeBg, onNoteOn, onNoteOff }: {
+  note: number; label: string; border: string; activeBg: string
   onNoteOn: (n: number) => void
   onNoteOff: (n: number) => void
 }) {
   const [pressed, setPressed] = useState(false)
-  const colorMap: Record<string, string> = {
-    red: 'border-red-600',
-    cyan: 'border-cyan-400',
-    lime: 'border-lime-400',
-    purple: 'border-purple-600',
-  }
-  const activeBgs: Record<string, string> = {
-    red: 'bg-red-600',
-    cyan: 'bg-cyan-400',
-    lime: 'bg-lime-400',
-    purple: 'bg-purple-600',
-  }
-  const borderColor = colorMap[color] || 'border-gray-700'
-  const activeBg = activeBgs[color] || 'bg-gray-800'
+  const borderColor = border
 
   return (
     <button
@@ -363,12 +335,13 @@ export default function Controller() {
 
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
-        {PADS.map(({ note, color }) => (
+        {PADS.map(({ note, border, activeBg }) => (
           <Pad
             key={note}
             note={note}
             label=""
-            color={color}
+            border={border}
+            activeBg={activeBg}
             onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
             onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />
@@ -377,7 +350,7 @@ export default function Controller() {
 
       {/* EQ / Filter */}
       <div className="grid grid-cols-4 gap-3">
-        {EQ_KNOBS.map(({ label, cc }, idx) => (
+        {KNOBS.map(({ id: label, cc }, idx) => (
           <Knob
             key={label} label={label} cc={cc} channel={activeDeck} send={send}
             value={eqValues[activeDeck][idx]}

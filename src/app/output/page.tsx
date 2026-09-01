@@ -25,14 +25,10 @@ function toBytes(msg: MidiMsg): number[] {
   return []
 }
 
-// --- Constants ---
-
-const PAD_NOTES           = [36, 37, 38, 39]
-const TURNTABLE_STOP_NOTE = 46
-const CUE_PLAY_NOTE       = 47
-const PLAY_STOP_NOTE      = 0
-const PITCH_CC            = 9
-const EQ_LABELS           = ['HIGH', 'MID', 'LOW', 'FILTER']
+import {
+  PADS, PAD_NOTES, KNOB_LABELS as EQ_LABELS, padByNote,
+  TURNTABLE_STOP_NOTE, CUE_NOTE as CUE_PLAY_NOTE, PLAY_NOTE as PLAY_STOP_NOTE, PITCH_CC,
+} from '@/core/mapping'
 
 // --- Monitor ---
 
@@ -177,10 +173,10 @@ export default function OutputPage() {
 
     socket.on('midi', (msg: MidiMsg) => {
       // パッドの点灯
-      if (msg.type === 'note_on' && PAD_NOTES.includes(msg.note)) {
+      if (msg.type === 'note_on' && padByNote(msg.note)) {
         if (msg.channel === 0) setActivePadsDeck1(prev => new Set(prev).add(msg.note))
         else if (msg.channel === 1) setActivePadsDeck2(prev => new Set(prev).add(msg.note))
-      } else if (msg.type === 'note_off' && PAD_NOTES.includes(msg.note)) {
+      } else if (msg.type === 'note_off' && padByNote(msg.note)) {
         if (msg.channel === 0) setActivePadsDeck1(prev => { const s = new Set(prev); s.delete(msg.note); return s })
         else if (msg.channel === 1) setActivePadsDeck2(prev => { const s = new Set(prev); s.delete(msg.note); return s })
       }
@@ -298,16 +294,15 @@ export default function OutputPage() {
               </div>
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => {
-                  const colors = ['border-red-600', 'border-cyan-400', 'border-lime-400', 'border-purple-600']
-                  const activeBgs = ['bg-red-600', 'bg-cyan-400', 'bg-lime-400', 'bg-purple-600']
+                  const { border, activeBg } = PADS[i]
                   return (
                     <div
                       key={note}
                       className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
                                   border-2 transition-all duration-75 bg-black
                                   ${activePadsDeck1.has(note)
-                                    ? `${activeBgs[i]} text-gray-950 scale-95`
-                                    : `${colors[i]} text-gray-600`}`}
+                                    ? `${activeBg} text-gray-950 scale-95`
+                                    : `${border} text-gray-600`}`}
                     >
                     </div>
                   )
@@ -335,16 +330,15 @@ export default function OutputPage() {
               </div>
               <div className="grid grid-cols-4 gap-3">
                 {PAD_NOTES.map((note, i) => {
-                  const colors = ['border-red-600', 'border-cyan-400', 'border-lime-400', 'border-purple-600']
-                  const activeBgs = ['bg-red-600', 'bg-cyan-400', 'bg-lime-400', 'bg-purple-600']
+                  const { border, activeBg } = PADS[i]
                   return (
                     <div
                       key={note}
                       className={`rounded-2xl aspect-square flex items-center justify-center text-3xl font-bold
                                   border-2 transition-all duration-75 bg-black
                                   ${activePadsDeck2.has(note)
-                                    ? `${activeBgs[i]} text-gray-950 scale-95`
-                                    : `${colors[i]} text-gray-600`}`}
+                                    ? `${activeBg} text-gray-950 scale-95`
+                                    : `${border} text-gray-600`}`}
                     >
                     </div>
                   )
