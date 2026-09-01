@@ -5,7 +5,8 @@ import { useMidiBridge } from '@/hooks/useMidiBridge'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import {
-  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, PITCH_CC,
+  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT, pitchToCC,
 } from '@/core/mapping'
 
 // --- Components ---
@@ -150,13 +151,16 @@ function PitchFader({ channel, send, value, onValueChange }: {
     if (!trackRef.current) return
     const rect  = trackRef.current.getBoundingClientRect()
     const ratio = 1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
-    let v       = Math.round(ratio * 127)
-    if (Math.abs(v - 64) <= 4) v = 64
+    let v       = Math.round(ratio * PITCH_MAX)
+    if (Math.abs(v - PITCH_CENTER) <= PITCH_DETENT) v = PITCH_CENTER
     onValueChange(v)
-    send({ type: 'cc', channel, controller: PITCH_CC, value: v })
+    // MSB → LSB の順で送る
+    const { msb, lsb } = pitchToCC(v)
+    send({ type: 'cc', channel, controller: PITCH_CC,     value: msb })
+    send({ type: 'cc', channel, controller: PITCH_CC_LSB, value: lsb })
   }
 
-  const thumbPct = (1 - value / 127) * 100
+  const thumbPct = (1 - value / PITCH_MAX) * 100
 
   return (
     <div ref={trackRef} className="relative w-5 h-full select-none touch-none cursor-pointer"
@@ -286,7 +290,7 @@ export default function Controller() {
   const [mounted, setMounted]   = useState(false)
   const [activeDeck, setActiveDeck] = useState(0)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
-  const [pitchValues, setPitchValues] = useState([64, 64])
+  const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
   const { status, log, connect, send, failed } = useMidiBridge()
 
   useEffect(() => { setMounted(true) }, [])

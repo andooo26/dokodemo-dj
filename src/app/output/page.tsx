@@ -27,13 +27,14 @@ function toBytes(msg: MidiMsg): number[] {
 
 import {
   PADS, PAD_NOTES, KNOB_LABELS as EQ_LABELS, padByNote,
-  TURNTABLE_STOP_NOTE, CUE_NOTE as CUE_PLAY_NOTE, PLAY_NOTE as PLAY_STOP_NOTE, PITCH_CC,
+  TURNTABLE_STOP_NOTE, CUE_NOTE as CUE_PLAY_NOTE, PLAY_NOTE as PLAY_STOP_NOTE,
+  KNOBS, PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER,
 } from '@/core/mapping'
 
 // --- Monitor ---
 
 function PitchFaderMonitor({ value }: { value: number }) {
-  const thumbPct = (1 - value / 127) * 100
+  const thumbPct = (1 - value / PITCH_MAX) * 100
   return (
     <div className="relative w-3 h-full">
       <div className="absolute left-1/2 -translate-x-1/2 inset-y-0 w-0.5 bg-gray-700 rounded-full" />
@@ -108,13 +109,14 @@ export default function OutputPage() {
   const [cueDeck2, setCueDeck2]                = useState(false)
   const [playDeck1, setPlayDeck1]              = useState(false)
   const [playDeck2, setPlayDeck2]              = useState(false)
-  const [pitchDeck1, setPitchDeck1]            = useState(64)
-  const [pitchDeck2, setPitchDeck2]            = useState(64)
+  const [pitchDeck1, setPitchDeck1]            = useState(PITCH_CENTER)
+  const [pitchDeck2, setPitchDeck2]            = useState(PITCH_CENTER)
   const [eqDeck1, setEqDeck1]                  = useState([64, 64, 64, 64])
   const [eqDeck2, setEqDeck2]                  = useState([64, 64, 64, 64])
 
   // コールバックから最新値を参照する
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
+  const pitchMsbRef = useRef<[number, number]>([PITCH_CENTER >> 7, PITCH_CENTER >> 7])
   const selectedRef = useRef('')
 
   const addLog = useCallback((msg: string) => {
@@ -211,12 +213,18 @@ export default function OutputPage() {
         if (msg.channel === 0) setPlayDeck1(false)
         else if (msg.channel === 1) setPlayDeck2(false)
       }
-      if (msg.type === 'cc' && msg.controller === PITCH_CC) {
-        if (msg.channel === 0) setPitchDeck1(msg.value)
-        else if (msg.channel === 1) setPitchDeck2(msg.value)
+      // TEMPO は MSB と LSB を合成する
+      if (msg.type === 'cc' && (msg.controller === PITCH_CC || msg.controller === PITCH_CC_LSB)) {
+        const deck = msg.channel === 1 ? 1 : 0
+        if (msg.controller === PITCH_CC) pitchMsbRef.current[deck] = msg.value
+        const lsb = msg.controller === PITCH_CC_LSB ? msg.value : 0
+        const v   = Math.min(PITCH_MAX, (pitchMsbRef.current[deck] << 7) | lsb)
+        if (deck === 0) setPitchDeck1(v)
+        else setPitchDeck2(v)
       }
-      if (msg.type === 'cc' && msg.controller >= 10 && msg.controller <= 13) {
-        const idx = msg.controller - 10
+      const knobIdx = msg.type === 'cc' ? KNOBS.findIndex(k => k.cc === msg.controller) : -1
+      if (msg.type === 'cc' && knobIdx >= 0) {
+        const idx = knobIdx
         if (msg.channel === 0) setEqDeck1(prev => prev.map((v, i) => i === idx ? msg.value : v))
         else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
       }

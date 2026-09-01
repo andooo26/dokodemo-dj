@@ -13,7 +13,7 @@ const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14
 const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
 // --- 仮想つまみゾーン (正規化座標) ---
-// 番号と色は mapping が持ち、ここは画面上の配置だけを持つ
+// 配置だけを持ち、CCは mapping から引く
 const KNOB_POS = [0.20, 0.40, 0.60, 0.80]
 const KNOB_ZONES = KNOBS.map((k, i) => ({
   label: k.id, cc: k.cc, nx: KNOB_POS[i], ny: 0.22,
@@ -27,7 +27,7 @@ const DECK_HOLD_MS   = 1000  // デッキ切り替えの長押し時間
 const FINGER_EXT_THR = 0.04  // 指伸展の閾値
 
 // --- PAD ---
-// 対応する指先だけがAR固有。ノートと色は mapping から引く
+// 指先の対応だけを持ち、ノートと色は mapping から引く
 const PAD_FINGER_TIPS = [8, 12, 16, 20]
 const PAD_CONFIG = PADS.map((pad, i) => ({
   fingerTip: PAD_FINGER_TIPS[i],

@@ -44,7 +44,7 @@ number }
 | PAD 2         | note   | 37   |
 | PAD 3         | note   | 38   |
 | PAD 4         | note   | 39   |
-| TEMPOフェーダ | CC     | 9    |
+| TEMPOフェーダ | CC     | 9 (MSB) / 41 (LSB) |
 | HIGH          | CC     | 10   |
 | MID           | CC     | 11   |
 | LOW           | CC     | 12   |

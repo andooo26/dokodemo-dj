@@ -1,5 +1,4 @@
-// MIDIマッピングの唯一の定義。
-// 各UIはここから番号と色を導出する。番号を変える場合はこのファイルだけを直す。
+// MIDIマッピングの定義。番号を変える場合はここだけを直す。
 
 export const DECK1 = 0
 export const DECK2 = 1
@@ -21,7 +20,19 @@ export const KNOBS = [
 export const TURNTABLE_STOP_NOTE = 46
 export const CUE_NOTE            = 47
 export const PLAY_NOTE           = 0
-export const PITCH_CC            = 9
+
+// TEMPOは14bit。ピッチベンドはジョグが使うのでCCペアで送る。
+export const PITCH_CC     = 9
+export const PITCH_CC_LSB = PITCH_CC + 32
+export const PITCH_MAX    = 16383
+export const PITCH_CENTER = 8192
+export const PITCH_DETENT = 516    // センターへの吸着幅
+
+// 14bit値をMSBとLSBに分ける
+export function pitchToCC(value: number): { msb: number; lsb: number } {
+  const v = Math.max(0, Math.min(PITCH_MAX, Math.round(value)))
+  return { msb: (v >> 7) & 0x7f, lsb: v & 0x7f }
+}
 
 export const PAD_NOTES  = PADS.map(p => p.note)
 export const KNOB_LABELS = KNOBS.map(k => k.id)
