@@ -126,7 +126,7 @@ npm run dev                              # 本番相当は npm run mobile
 
 | 用途             | URL                        |
 | ---------------- | -------------------------- |
-| スマホUI         | `https://<PCのIP>:3000/`   |
+| スマホUI         | `https://<PCのIP>:3000/touch`   |
 | ARモード         | `https://<PCのIP>:3000/ar` |
 | PC版UI (MIDI出力) | `https://localhost:3000/output` |
 

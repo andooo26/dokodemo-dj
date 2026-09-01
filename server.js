@@ -1,10 +1,5 @@
-// Custom Next.js server with embedded Socket.io relay.
-// MIDI output happens in the PC browser via Web MIDI API (/output page).
-//
-// 証明書は起動時に自動セットアップされる:
-//   1. mkcert があれば certs/ に自己署名証明書を自動生成 (LAN IP / .local 名を SAN に含む)
-//   2. IP が変わった場合は SAN を比較して自動で再発行
-//   3. mkcert が無ければ HTTP で起動 (cloudflared / tailscale serve 用)
+// Next.js サーバ + Socket.io リレー。
+// 証明書は mkcert があれば自動生成し、無ければ HTTP で起動する。
 
 const { createServer } = require('https')
 const { createServer: createHttpServer } = require('http')
@@ -24,7 +19,7 @@ const KEY_FILE  = path.join(CERT_DIR, 'dev-key.pem')
 const CERT_FILE = path.join(CERT_DIR, 'dev.pem')
 const SANS_FILE = path.join(CERT_DIR, '.sans')
 
-// --- ネットワーク情報 -------------------------------------------------------
+// ネットワーク情報
 
 function lanAddresses() {
   return Object.values(os.networkInterfaces())
@@ -37,7 +32,7 @@ const LAN_IPS   = lanAddresses()
 const MDNS_NAME = `${os.hostname().replace(/\.local$/i, '')}.local`
 const HOST      = LAN_IPS[0] || 'localhost'
 
-// --- 証明書の自動セットアップ -----------------------------------------------
+// 証明書
 
 function run(cmd, args) {
   return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -47,11 +42,11 @@ function mkcertCaRoot() {
   try {
     return run('mkcert', ['-CAROOT'])
   } catch {
-    return null // mkcert 未インストール
+    return null // mkcert が無い
   }
 }
 
-// 証明書に含めるべきホスト名。IP が変わればこの一覧も変わる。
+// 証明書に含めるホスト名
 function wantedSans() {
   return ['localhost', '127.0.0.1', '::1', MDNS_NAME, ...LAN_IPS]
 }
@@ -87,14 +82,14 @@ console.log('\n=== どこでもDJ ===')
 const cert   = setupCert()
 const scheme = cert.ok ? 'https' : 'http'
 
-// --- サーバ -----------------------------------------------------------------
+// サーバ
 
 const app    = next({ dev })
 const handle = app.getRequestHandler()
 
 app.prepare().then(() => {
   const handler = (req, res) => {
-    // スマホにルート CA を配るための固定ルート (mkcert 利用時のみ)
+    // スマホ用にルート CA を配る
     if (cert.ok && parse(req.url).pathname === '/rootCA.pem') {
       res.writeHead(200, {
         'Content-Type': 'application/x-x509-ca-cert',
@@ -108,8 +103,7 @@ app.prepare().then(() => {
 
   const server = cert.ok ? createServer(cert.ssl, handler) : createHttpServer(handler)
 
-  // HTTPS のときだけ HTTP → HTTPS リダイレクトを用意する。
-  // HTTP 起動時に立てるとトンネル経由でリダイレクトループになる。
+  // HTTPS のときだけリダイレクトを用意する
   if (cert.ok) {
     createHttpServer((req, res) => {
       const host = (req.headers.host || HOST).replace(/:\d+$/, '')
@@ -152,7 +146,7 @@ app.prepare().then(() => {
       console.log(`        cloudflared tunnel --url http://localhost:${port}   … 証明書のインストール不要`)
     }
 
-    console.log(`\nスマホ (コントローラー): ${scheme}://${HOST}:${port}/`)
+    console.log(`\nスマホ (コントローラー): ${scheme}://${HOST}:${port}/touch`)
     console.log(`スマホ (AR モード):      ${scheme}://${HOST}:${port}/ar`)
     console.log(`PC Chrome (MIDI 出力):  ${scheme}://localhost:${port}/output`)
 

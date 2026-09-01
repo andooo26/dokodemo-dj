@@ -12,7 +12,7 @@ type MidiMsg =
   | { type: 'cc';         channel: number; controller: number; value: number }
   | { type: 'pitch_bend'; channel: number; value: number }
 
-// MIDI メッセージ → バイト列
+// MidiMsg をバイト列に変換
 function toBytes(msg: MidiMsg): number[] {
   const ch = (msg.channel ?? 0) & 0x0f
   if (msg.type === 'note_on')    return [0x90 | ch, msg.note & 0x7f, msg.velocity & 0x7f]
@@ -34,7 +34,7 @@ const PLAY_STOP_NOTE      = 0
 const PITCH_CC            = 9
 const EQ_LABELS           = ['HIGH', 'MID', 'LOW', 'FILTER']
 
-// --- Monitor components ---
+// --- Monitor ---
 
 function PitchFaderMonitor({ value }: { value: number }) {
   const thumbPct = (1 - value / 127) * 100
@@ -116,7 +116,7 @@ export default function OutputPage() {
   const [eqDeck1, setEqDeck1]                  = useState([64, 64, 64, 64])
   const [eqDeck2, setEqDeck2]                  = useState([64, 64, 64, 64])
 
-  // useRef で最新値をコールバック内から参照
+  // コールバックから最新値を参照する
   const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
   const selectedRef = useRef('')
 
@@ -125,7 +125,7 @@ export default function OutputPage() {
     setLog(prev => [`[${ts}] ${msg}`, ...prev].slice(0, 40))
   }, [])
 
-  // --- Web MIDI API ---
+  // Web MIDI
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
       setMidiStatus('Web MIDI API 非対応 — Chrome または Edge で開いてください')
@@ -144,7 +144,7 @@ export default function OutputPage() {
         setMidiPorts(names)
         setMidiStatus(`${names.length} ポート検出`)
 
-        // 以前選択していたポートが消えた場合はリセット
+        // 選択中のポートが消えたらリセット
         if (selectedRef.current !== '' && !names.includes(selectedRef.current)) {
           selectedRef.current = ''
           setSelectedPort('')
@@ -158,7 +158,7 @@ export default function OutputPage() {
     })
   }, [])
 
-  // --- Socket.io (same-origin — サーバーは server.js) ---
+  // Socket.io
   useEffect(() => {
     const socket = io({
       query: { role: 'output' },
@@ -169,7 +169,7 @@ export default function OutputPage() {
     socket.on('disconnect', () => { setSockStatus('disconnected'); addLog('切断しました') })
 
     socket.on('midi', (msg: MidiMsg) => {
-      // パッドの点灯状態を更新
+      // パッドの点灯
       if (msg.type === 'note_on' && PAD_NOTES.includes(msg.note)) {
         if (msg.channel === 0) setActivePadsDeck1(prev => new Set(prev).add(msg.note))
         else if (msg.channel === 1) setActivePadsDeck2(prev => new Set(prev).add(msg.note))
@@ -178,7 +178,7 @@ export default function OutputPage() {
         else if (msg.channel === 1) setActivePadsDeck2(prev => { const s = new Set(prev); s.delete(msg.note); return s })
       }
 
-      // ターンテーブルの回転・停止状態を更新
+      // ターンテーブルの回転
       if (msg.type === 'pitch_bend' && msg.value !== 8192) {
         const delta = (msg.value - 8192) / 4096 * 90
         if (msg.channel === 0) setAngleDeck1(prev => prev + delta)
@@ -218,14 +218,14 @@ export default function OutputPage() {
         else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
       }
 
-      // ログ出力（MIDI出力の試行）
+      // ログ出力
       const bytes = toBytes(msg)
       if (bytes.length) {
         const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')
         addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
       }
 
-      // MIDI 出力
+      // 送信
       const out = outputsRef.current.get(selectedRef.current)
       if (!out) {
         addLog('MIDI未指定')

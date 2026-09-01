@@ -46,7 +46,7 @@ export function useMidiBridge() {
     else if (msg.type === 'pitch_bend') addLog(`Pitch Bend ${msg.value}`)
   }, [addLog])
 
-  // マウント時に自動接続
+  // マウント時に接続
   useEffect(() => { connect() }, [connect])
 
   useEffect(() => () => { socketRef.current?.disconnect() }, [])

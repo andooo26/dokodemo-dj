@@ -12,7 +12,6 @@ const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14
 const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
 // --- 仮想つまみゾーン (正規化座標) ---
-// リアカメラで画面下部に手を向けやすい位置に配置
 const KNOB_ZONES = [
   { label: 'HIGH',   cc: 10, nx: 0.20, ny: 0.22 },
   { label: 'MID',    cc: 11, nx: 0.40, ny: 0.22 },
@@ -20,12 +19,12 @@ const KNOB_ZONES = [
   { label: 'FILTER', cc: 13, nx: 0.80, ny: 0.22 },
 ] as const
 
-const FADER_HALF_H   = 0.14  // フェーダートラック半高（正規化）
-const FADER_HIT_X    = 0.06  // 横方向ホバー判定幅（正規化）
+const FADER_HALF_H   = 0.14  // フェーダー半高
+const FADER_HIT_X    = 0.06  // ホバー判定幅
 const PINCH_THRESH   = 0.07  // ピンチ判定距離
-const FADER_SENSI    = 200   // 上下移動感度 (正規化Δy → CC value)
-const DECK_HOLD_MS   = 1000  // デッキ切り替えホールド時間(ms)
-const FINGER_EXT_THR = 0.04  // 指伸展判定閾値（正規化）
+const FADER_SENSI    = 200   // 上下移動の感度
+const DECK_HOLD_MS   = 1000  // デッキ切り替えの長押し時間
+const FINGER_EXT_THR = 0.04  // 指伸展の閾値
 
 // --- PAD ---
 const PAD_CONFIG = [
@@ -35,14 +34,14 @@ const PAD_CONFIG = [
   { fingerTip: 20, note: 39, label: 'PAD 4', color: '#a78bfa' },
 ] as const
 
-// 伸展している指の本数（人差し〜小指）
+// 伸ばしている指の本数
 function countExtendedFingers(lm: { x: number; y: number }[]): number {
   return (
     [[8, 5], [12, 9], [16, 13], [20, 17]] as [number, number][]
   ).filter(([tip, mcp]) => lm[tip].y < lm[mcp].y - FINGER_EXT_THR).length
 }
 
-// MediaPipe スケルトン接続
+// スケルトンの接続
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],
   [0,5],[5,6],[6,7],[7,8],
@@ -68,7 +67,7 @@ export default function ARPage() {
 
   // デッキ切り替えジェスチャー
   const deckGestureRef      = useRef<'none' | 'holding' | 'completed'>('none')
-  const deckGestureStartRef = useRef<number | null>(null)  // 開始タイムスタンプ
+  const deckGestureStartRef = useRef<number | null>(null)
 
   // つまみ状態
   const eqValuesRef    = useRef([[64,64,64,64],[64,64,64,64]])
@@ -161,7 +160,7 @@ export default function ARPage() {
         ctx.lineWidth   = 1
         ctx.stroke()
 
-        // サム（横長の角丸バー）
+        // サム
         const tw = grabbed ? 22 : hovered ? 18 : 14
         const th = 8
         ctx.fillStyle   = grabbed ? 'rgba(210,210,210,0.95)' : hovered ? 'rgba(180,180,180,0.75)' : 'rgba(150,150,150,0.45)'
@@ -178,7 +177,7 @@ export default function ARPage() {
         ctx.textAlign = 'center'
         ctx.fillText(label, cx, trackBot + 16)
 
-        // グラブ中は値を表示
+        // グラブ中のみ値を表示
         if (grabbed) {
           ctx.font      = '11px sans-serif'
           ctx.fillStyle = '#93c5fd'
@@ -208,7 +207,7 @@ export default function ARPage() {
       labelSet.clear()
       let hoveredKnob = -1
 
-      // 手が1本も検出されなければ全リセット
+      // 手が無ければリセット
       if (results.landmarks.length === 0) {
         for (const note of activePadsRef.current)
           sendRef.current({ type: 'note_off', channel: activeDeckRef.current, note })
@@ -223,9 +222,9 @@ export default function ARPage() {
 
       for (const landmarks of results.landmarks) {
         const thumb = landmarks[4]
-        const index = landmarks[8]  // 人差し指先端
+        const index = landmarks[8]
 
-        // --- フェーダーホバー判定（人差し指先端がトラック矩形内） ---
+        // フェーダーのホバー判定
         for (let i = 0; i < KNOB_ZONES.length; i++) {
           const { nx, ny } = KNOB_ZONES[i]
           if (
@@ -235,16 +234,16 @@ export default function ARPage() {
           ) { hoveredKnob = i; break }
         }
 
-        // --- 親指+人差し指ピンチ判定 ---
+        // ピンチ判定
         const indexPinch = Math.hypot(thumb.x - index.x, thumb.y - index.y) < PINCH_THRESH
 
         if (indexPinch && hoveredKnob >= 0) {
-          // つまみをグラブ
+          // グラブ開始
           if (grabbedKnobRef.current !== hoveredKnob) {
             grabbedKnobRef.current = hoveredKnob
             lastYRef.current       = index.y
           }
-          // 上移動 → 増加、下移動 → 減少
+          // 上で増加、下で減少
           const delta = lastYRef.current !== null ? (lastYRef.current - index.y) * FADER_SENSI : 0
           lastYRef.current = index.y
 
@@ -255,20 +254,20 @@ export default function ARPage() {
           sendRef.current({ type: 'cc', channel: activeDeckRef.current, controller: KNOB_ZONES[hoveredKnob].cc, value: v })
           labelSet.add(KNOB_ZONES[hoveredKnob].label)
         } else {
-          // ピンチ解除またはゾーン外ならグラブ解放
+          // ピンチ解除かゾーン外で解放
           if (!indexPinch && grabbedKnobRef.current >= 0) {
             grabbedKnobRef.current = -1
             lastYRef.current       = null
           }
 
-          // --- PAD ピンチ検出（knob grab 中・グー状態では無効） ---
+          // PAD のピンチ検出
           if (grabbedKnobRef.current < 0) {
-            // グーのポーズではPAD完全無効
+            // グーでは無効
             const isFist = countExtendedFingers(landmarks) === 0
-            // フェーダーエリア（y < 0.4）ではPAD完全無効
+            // フェーダーエリアでは無効
             const inFaderZone = index.y < 0.4
 
-            // 最も深いピンチ1本だけ選択（グー中・フェーダーゾーンなら -1 固定）
+            // 最も深いピンチを1本だけ選ぶ
             let bestNote = -1, bestDist = PINCH_THRESH
             if (!isFist && !inFaderZone) {
               for (const { fingerTip, note } of PAD_CONFIG) {
@@ -277,7 +276,7 @@ export default function ARPage() {
               }
             }
 
-            // note_on / note_off（bestNote = -1 なら全解放）
+            // note_on / note_off
             for (const { note, label } of PAD_CONFIG) {
               const isActive = note === bestNote
               const was      = activePadsRef.current.has(note)
@@ -293,8 +292,7 @@ export default function ARPage() {
           }
         }
 
-        // --- デッキ切り替えジェスチャー検出（グー3秒でトグル） ---
-        // PAD/つまみ操作中は無視
+        // グーの長押しでデッキを切り替える
         if (activePadsRef.current.size === 0 && grabbedKnobRef.current < 0) {
           const isFist = countExtendedFingers(landmarks) === 0
           if (isFist) {
@@ -303,7 +301,7 @@ export default function ARPage() {
               deckGestureStartRef.current = now
             }
           } else {
-            // グー解放 → 状態リセット
+            // グー解放でリセット
             deckGestureRef.current      = 'none'
             deckGestureStartRef.current = null
           }
@@ -320,19 +318,19 @@ export default function ARPage() {
           ctx.stroke()
         }
 
-        // 人差し指先端ドット（ホバー中は強調）
+        // 人差し指先端のドット
         ctx.beginPath()
         ctx.arc(index.x * canvas.width, index.y * canvas.height, hoveredKnob >= 0 ? 10 : 5, 0, Math.PI * 2)
         ctx.fillStyle = hoveredKnob >= 0 ? 'white' : 'rgba(255,255,255,0.5)'
         ctx.fill()
 
-        // 親指先端ドット
+        // 親指先端のドット
         ctx.beginPath()
         ctx.arc(thumb.x * canvas.width, thumb.y * canvas.height, 7, 0, Math.PI * 2)
         ctx.fillStyle = 'rgba(255,255,255,0.7)'
         ctx.fill()
 
-        // PAD ピンチライン描画（グー・フェーダーゾーン外でのみ）
+        // PAD のピンチライン
         const drawIsFist = countExtendedFingers(landmarks) === 0
         if (!drawIsFist && index.y >= 0.4) {
           let drawBestNote = -1, drawBestDist = PINCH_THRESH
@@ -354,10 +352,10 @@ export default function ARPage() {
         ctx.restore()
       }
 
-      // 仮想フェーダー描画（毎フレーム）
+      // 仮想フェーダー
       drawFaders(ctx, canvas.width, canvas.height, hoveredKnob)
 
-      // デッキ切り替えプログレス描画（'holding' または 'completed'）
+      // デッキ切り替えのプログレス
       if (deckGestureRef.current !== 'none' && deckGestureStartRef.current !== null) {
         const nextDeck = activeDeckRef.current === 0 ? 1 : 0
         const elapsed  = now - deckGestureStartRef.current
@@ -372,7 +370,7 @@ export default function ARPage() {
         ctx.fillStyle = 'rgba(0,0,0,0.55)'
         ctx.fill()
 
-        // プログレスアーク
+        // アーク
         ctx.beginPath()
         ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress)
         ctx.strokeStyle = '#fbbf24'
@@ -392,7 +390,7 @@ export default function ARPage() {
           ctx.fillText(`${Math.ceil((DECK_HOLD_MS - elapsed) / 1000)}s`, cx, cy + 12)
         }
 
-        // 3秒経過で確定（'holding' → 'completed'）
+        // 長押し完了で確定
         if (deckGestureRef.current === 'holding' && elapsed >= DECK_HOLD_MS) {
           activeDeckRef.current = nextDeck
           setActiveDeck(nextDeck)
@@ -400,7 +398,7 @@ export default function ARPage() {
         }
       }
 
-      // デッキインジケーター（左下）
+      // デッキインジケーター
       ctx.font      = 'bold 17px sans-serif'
       ctx.fillStyle = 'rgba(251,191,36,0.9)'
       ctx.textAlign = 'left'
@@ -432,7 +430,7 @@ export default function ARPage() {
 
       {/* ヘッダー */}
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent">
-        <LinkButton href="/">← コントローラーに戻る</LinkButton>
+        <LinkButton href="/touch">← コントローラーに戻る</LinkButton>
         <span className="text-white text-sm font-bold">ARモード</span>
       </div>
 
@@ -466,7 +464,7 @@ export default function ARPage() {
       {cameraError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 px-8 text-center">
           <p className="text-red-400">{cameraError}</p>
-          <LinkButton href="/">タッチUIに戻る</LinkButton>
+          <LinkButton href="/touch">タッチUIに戻る</LinkButton>
         </div>
       )}
     </div>
