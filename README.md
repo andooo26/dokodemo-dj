@@ -9,7 +9,7 @@
 | フレームワーク     | Next.js 16.2.6 (App Router) |
 | UI                 | React 19 + Tailwind CSS     |
 | リアルタイム通信   | Socket.io                   |
-| MIDI               | Web MIDI API                |
+| MIDI               | @julusian/midi (Node)       |
 | ハンドトラッキング | @mediapipe/tasks-vision     |
 | サーバー           | Node.js                     |
 | 言語               | TypeScript                  |
@@ -18,8 +18,9 @@
 ### サーバ
 - HTTPS化 : mkcertにて自己署名証明書を起動時に自動生成 (`certs/`)
 - ポート : 3000 (HTTPS), 3001 (HTTP→HTTPSリダイレクト)
-- Socket.io : controller(スマホ)/output(PC)
-- リレー : controllerから受信したMIDI信号をoutputに転送
+- Socket.io : controller(スマホ)/output(PC モニタ)
+- MIDI出力 : controllerから受信した信号をサーバが仮想ポート `DokodemoDJ` へ送出
+- リレー : 同じ信号をoutput(モニタ)にも転送
 #### MIDIメッセージ仕様
 #### メッセージ型 (MidiMsg)
 ```
@@ -128,14 +129,14 @@ npm run dev                              # 本番相当は npm run mobile
 | ---------------- | -------------------------- |
 | スマホUI         | `https://<PCのIP>:3000/touch`   |
 | ARモード         | `https://<PCのIP>:3000/ar` |
-| PC版UI (MIDI出力) | `https://localhost:3000/output` |
+| PC版UI (モニタ)   | `https://localhost:3000/output` |
 
 ### 証明書の自動セットアップ
 `server.js` が起動時に以下を行う。
 
 - mkcert があれば `certs/` に自己署名証明書を自動生成する。SANには `localhost` / LAN IP / `<ホスト名>.local` が含まれる
 - PCのIPが変わった場合はSANの差分を検出して自動で再発行する
-- mkcert が無い場合はHTTPで起動し、対処法を表示する(HTTPではカメラとWeb MIDIは使用不可)
+- mkcert が無い場合はHTTPで起動し、対処法を表示する(HTTPではスマホのカメラが使用不可)
 
 `.local` 名でアクセスすればIP変更の影響を受けない。
 

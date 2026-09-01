@@ -4,26 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
-// --- Types ---
-
-type MidiMsg =
-  | { type: 'note_on';    channel: number; note: number; velocity: number }
-  | { type: 'note_off';   channel: number; note: number }
-  | { type: 'cc';         channel: number; controller: number; value: number }
-  | { type: 'pitch_bend'; channel: number; value: number }
-
-// MidiMsg をバイト列に変換
-function toBytes(msg: MidiMsg): number[] {
-  const ch = (msg.channel ?? 0) & 0x0f
-  if (msg.type === 'note_on')    return [0x90 | ch, msg.note & 0x7f, msg.velocity & 0x7f]
-  if (msg.type === 'note_off')   return [0x80 | ch, msg.note & 0x7f, 0]
-  if (msg.type === 'cc')         return [0xb0 | ch, msg.controller & 0x7f, msg.value & 0x7f]
-  if (msg.type === 'pitch_bend') {
-    const v = Math.max(0, Math.min(16383, msg.value))
-    return [0xe0 | ch, v & 0x7f, (v >> 7) & 0x7f]
-  }
-  return []
-}
+import { encode, decode } from '@/core/codec'
+import type { MidiMsg } from '@/core/codec'
 
 import {
   PADS, PAD_NOTES, KNOB_LABELS as EQ_LABELS, padByNote,
@@ -93,9 +75,7 @@ function TurntableMonitor({ angle, stopped }: { angle: number; stopped: boolean 
 }
 
 export default function OutputPage() {
-  const [midiPorts, setMidiPorts]       = useState<string[]>([])
-  const [selectedPort, setSelectedPort] = useState('')
-  const [midiStatus, setMidiStatus]     = useState('初期化中...')
+  const [midiPort, setMidiPort]         = useState<{ name: string | null; virtual: boolean } | null>(null)
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
   const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
@@ -115,46 +95,11 @@ export default function OutputPage() {
   const [eqDeck2, setEqDeck2]                  = useState([64, 64, 64, 64])
 
   // コールバックから最新値を参照する
-  const outputsRef = useRef<Map<string, MIDIOutput>>(new Map())
   const pitchMsbRef = useRef<[number, number]>([PITCH_CENTER >> 7, PITCH_CENTER >> 7])
-  const selectedRef = useRef('')
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
     setLog(prev => [`[${ts}] ${msg}`, ...prev].slice(0, 40))
-  }, [])
-
-  // Web MIDI
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
-      setMidiStatus('Web MIDI API 非対応 — Chrome または Edge で開いてください')
-      return
-    }
-
-    navigator.requestMIDIAccess({ sysex: false }).then(access => {
-      const refresh = () => {
-        outputsRef.current.clear()
-        const names: string[] = []
-        access.outputs.forEach((out: MIDIOutput) => {
-          const name = out.name ?? out.id
-          outputsRef.current.set(name, out)
-          names.push(name)
-        })
-        setMidiPorts(names)
-        setMidiStatus(`${names.length} ポート検出`)
-
-        // 選択中のポートが消えたらリセット
-        if (selectedRef.current !== '' && !names.includes(selectedRef.current)) {
-          selectedRef.current = ''
-          setSelectedPort('')
-        }
-      }
-
-      refresh()
-      access.onstatechange = refresh
-    }).catch(e => {
-      setMidiStatus(`MIDI アクセス失敗: ${e.message}`)
-    })
   }, [])
 
   // Socket.io
@@ -167,13 +112,23 @@ export default function OutputPage() {
     socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
     socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
 
+    socket.on('midiport', (p: { name: string | null; virtual: boolean }) => {
+      setMidiPort(p)
+      addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
+    })
+
     // スマホ(controller)の接続数
     socket.on('controllers', (n: number) => {
       setControllers(n)
       addLog(n === 0 ? 'スマホが切断しました' : `スマホが接続しました (${n}台)`)
     })
 
-    socket.on('midi', (msg: MidiMsg) => {
+    socket.on('midi', (raw: MidiMsg | ArrayBuffer | Uint8Array) => {
+      const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw)
+        : ArrayBuffer.isView(raw) ? raw as Uint8Array : null
+      const msg = bytes ? decode(bytes) : (raw as MidiMsg)
+      if (!msg) return
+
       // パッドの点灯
       if (msg.type === 'note_on' && padByNote(msg.note)) {
         if (msg.channel === 0) setActivePadsDeck1(prev => new Set(prev).add(msg.note))
@@ -229,22 +184,10 @@ export default function OutputPage() {
         else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
       }
 
-      // ログ出力
-      const bytes = toBytes(msg)
-      if (bytes.length) {
-        const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')
-        addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
-      }
-
-      // 送信
-      const out = outputsRef.current.get(selectedRef.current)
-      if (!out) {
-        addLog('MIDI未指定')
-        return
-      }
-      if (bytes.length) {
-        out.send(bytes)
-      }
+      // MIDI送信はサーバ側。ここは表示のみ
+      const outBytes = bytes ?? encode(msg)
+      const hex = Array.from(outBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')
+      addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
     })
 
     return () => { socket.disconnect() }
@@ -256,27 +199,7 @@ export default function OutputPage() {
       {/* Header bar */}
       <header className="flex items-center gap-6 px-6 py-3 border-b border-gray-800 shrink-0">
         <h1 className="text-xl font-bold">どこでもDJ</h1>
-        <div className="ml-auto flex items-center gap-3">
-          {midiPorts.length === 0 ? (
-            <span className="text-sm text-yellow-400">MIDI デバイスなし</span>
-          ) : (
-            <select
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm
-                         focus:outline-none focus:border-blue-500"
-              value={selectedPort}
-              onChange={e => {
-                setSelectedPort(e.target.value)
-                selectedRef.current = e.target.value
-                addLog(`ポート変更: ${e.target.value || '(未選択)'}`)
-              }}
-            >
-              <option value="">-- ポートを選択 --</option>
-              {midiPorts.map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          )}
-        </div>
+        <span className="ml-auto text-xs text-gray-500 uppercase tracking-widest">Monitor</span>
       </header>
 
       {/* Main content */}
@@ -379,10 +302,11 @@ export default function OutputPage() {
               <span className="text-xs text-gray-400 uppercase tracking-widest">MIDIポート</span>
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${
-                  selectedPort ? 'bg-lime-400'
-                    : midiPorts.length === 0 ? 'bg-red-500' : 'bg-yellow-400'}`} />
-                <span className="text-sm truncate" title={selectedPort || midiStatus}>
-                  {selectedPort || (midiPorts.length === 0 ? midiStatus : '未選択')}
+                  midiPort?.name ? 'bg-lime-400' : midiPort ? 'bg-red-500' : 'bg-yellow-400'}`} />
+                <span className="text-sm truncate" title={midiPort?.name ?? ''}>
+                  {midiPort?.name
+                    ? `${midiPort.name}${midiPort.virtual ? ' (仮想)' : ''}`
+                    : midiPort ? 'ポートを開けません' : '確認中...'}
                 </span>
               </div>
             </div>
