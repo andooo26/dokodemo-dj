@@ -16,7 +16,7 @@
 
 ## 技術仕様
 ### サーバ
-- HTTPS化 : mkcertにて自己署名証明書
+- HTTPS化 : mkcertにて自己署名証明書を起動時に自動生成 (`certs/`)
 - ポート : 3000 (HTTPS), 3001 (HTTP→HTTPSリダイレクト)
 - Socket.io : controller(スマホ)/output(PC)
 - リレー : controllerから受信したMIDI信号をoutputに転送
@@ -116,19 +116,42 @@ number }
 ## 起動方法
 
 ```bash
-# 開発
-npm run dev
-
-# 本番(スマホ対応)
-npm run mobile
-スマホUI : https://<PCのIP>:3000/
-ARモード : https://<PCのIP>:3000/ar   
-PC版UI : https://localhost:3000/output
+npm install
+brew install mkcert && mkcert -install   # 初回のみ
+npm run dev                              # 本番相当は npm run mobile
 ```
 
-### HTTPS証明書セットアップ
+証明書は `npm run dev` が自動でセットアップするので、手動発行は不要。
+起動時にアクセス用URLがターミナルに表示される。
+
+| 用途             | URL                        |
+| ---------------- | -------------------------- |
+| スマホUI         | `https://<PCのIP>:3000/`   |
+| ARモード         | `https://<PCのIP>:3000/ar` |
+| PC版UI (MIDI出力) | `https://localhost:3000/output` |
+
+### 証明書の自動セットアップ
+`server.js` が起動時に以下を行う。
+
+- mkcert があれば `certs/` に自己署名証明書を自動生成する。SANには `localhost` / LAN IP / `<ホスト名>.local` が含まれる
+- PCのIPが変わった場合はSANの差分を検出して自動で再発行する
+- mkcert が無い場合はHTTPで起動し、対処法を表示する(HTTPではカメラとWeb MIDIは使用不可)
+
+`.local` 名でアクセスすればIP変更の影響を受けない。
+
+### スマホでの証明書警告
+サーバが `/rootCA.pem` でmkcertのルートCAを配信するので、スマホでそのURLを開いてインストールする。
+
+- iOS : 設定 → 一般 → VPNとデバイス管理 でプロファイルをインストール後、設定 → 一般 → 情報 → 証明書信頼設定 で有効化
+- Android : ダウンロード後、設定からCA証明書としてインストール
+
+### 証明書を使わない方法
+外出先でのデモなど、スマホ側に何もインストールさせたくない場合はトンネルを使う。
+
 ```bash
-brew install mkcert
-mkcert localhost <PCのIP>
-# → localhost+1.pem, localhost+1-key.pem をルートに配置
+npm run dev      # 別ターミナル
+npm run tunnel   # cloudflared が必要
 ```
+
+`https://xxx.trycloudflare.com` が発行され、正規の証明書で接続できる。
+通信がCloudflare経由になるためMIDIに遅延が乗る点に注意。

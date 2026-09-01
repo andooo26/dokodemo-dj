@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "mobile": "next build && NODE_ENV=production node server.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
