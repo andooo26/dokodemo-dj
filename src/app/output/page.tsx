@@ -100,6 +100,7 @@ export default function OutputPage() {
   const [selectedPort, setSelectedPort] = useState('')
   const [midiStatus, setMidiStatus]     = useState('初期化中...')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
+  const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
   const [activePadsDeck1, setActivePadsDeck1]  = useState<Set<number>>(new Set())
   const [activePadsDeck2, setActivePadsDeck2]  = useState<Set<number>>(new Set())
@@ -166,7 +167,13 @@ export default function OutputPage() {
     })
 
     socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
-    socket.on('disconnect', () => { setSockStatus('disconnected'); addLog('切断しました') })
+    socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
+
+    // スマホ(controller)の接続数
+    socket.on('controllers', (n: number) => {
+      setControllers(n)
+      addLog(n === 0 ? 'スマホが切断しました' : `スマホが接続しました (${n}台)`)
+    })
 
     socket.on('midi', (msg: MidiMsg) => {
       // パッドの点灯
@@ -350,6 +357,33 @@ export default function OutputPage() {
               </div>
             </div>
 
+          </div>
+
+          {/* Status */}
+          <div className="shrink-0 grid grid-cols-2 gap-6 bg-gray-900 rounded-2xl px-5 py-3">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">スマホ接続</span>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  sockStatus !== 'connected' ? 'bg-red-500'
+                    : controllers > 0 ? 'bg-lime-400' : 'bg-yellow-400'}`} />
+                <span className="text-sm">
+                  {sockStatus !== 'connected' ? 'サーバー未接続'
+                    : controllers > 0 ? `接続中 (${controllers}台)` : '未接続'}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">MIDIポート</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  selectedPort ? 'bg-lime-400'
+                    : midiPorts.length === 0 ? 'bg-red-500' : 'bg-yellow-400'}`} />
+                <span className="text-sm truncate" title={selectedPort || midiStatus}>
+                  {selectedPort || (midiPorts.length === 0 ? midiStatus : '未選択')}
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 

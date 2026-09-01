@@ -116,10 +116,16 @@ app.prepare().then(() => {
     cors: { origin: '*', methods: ['GET', 'POST'] },
   })
 
+  // controller の接続数を output に通知する
+  const controllerCount = () => io.sockets.adapter.rooms.get('controller')?.size ?? 0
+  const notifyControllers = () => io.to('output').emit('controllers', controllerCount())
+
   io.on('connection', (socket) => {
     const role = socket.handshake.query.role || 'unknown'
     console.log(`[+] ${role} connected  (${socket.id})`)
     socket.join(role)
+    if (role === 'output') socket.emit('controllers', controllerCount())
+    else notifyControllers()
 
     socket.on('midi', (msg) => {
       io.to('output').emit('midi', msg)
@@ -133,6 +139,7 @@ app.prepare().then(() => {
 
     socket.on('disconnect', () => {
       console.log(`[-] ${role} disconnected (${socket.id})`)
+      if (role !== 'output') notifyControllers()
     })
   })
 
