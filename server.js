@@ -119,6 +119,46 @@ app.prepare().then(() => {
     cors: { origin: '*', methods: ['GET', 'POST'] },
   })
 
+  // MIDIポートとモニタの両方へ送る
+  const deliver = (msg) => {
+    if (ArrayBuffer.isView(msg)) midiOut.send(msg)
+    io.to('output').emit('midi', msg)
+    logMidi(msg)
+  }
+
+  // 鳴っている音と動かされたベンドを覚えておく
+  const activeNotes = new Set()
+  const bentChannels = new Set()
+  const PITCH_CENTER = 8192
+
+  const track = (b) => {
+    const status = b[0] & 0xf0
+    const ch = b[0] & 0x0f
+    if (status === 0x90 && b[2] > 0) activeNotes.add(`${ch}:${b[1]}`)
+    else if (status === 0x90 || status === 0x80) activeNotes.delete(`${ch}:${b[1]}`)
+    else if (status === 0xe0) {
+      const v = (b[2] << 7) | b[1]
+      if (v === PITCH_CENTER) bentChannels.delete(ch)
+      else bentChannels.add(ch)
+    }
+  }
+
+  // スマホが全部切れたら、鳴りっぱなしを解放する
+  const releaseAll = () => {
+    if (activeNotes.size === 0 && bentChannels.size === 0) return
+    console.log(`  [!] 未解放の音を戻します (note:${activeNotes.size} bend:${bentChannels.size})`)
+
+    for (const key of activeNotes) {
+      const [ch, note] = key.split(':').map(Number)
+      deliver(Uint8Array.from([0x80 | ch, note, 0]))
+    }
+    for (const ch of bentChannels) {
+      deliver(Uint8Array.from([0xe0 | ch, PITCH_CENTER & 0x7f, (PITCH_CENTER >> 7) & 0x7f]))
+    }
+    activeNotes.clear()
+    bentChannels.clear()
+  }
+
   // 3バイトのMIDIでも旧来のJSONでもログに出せるようにする
   const logMidi = (msg) => {
     const b = ArrayBuffer.isView(msg) ? msg : null
@@ -155,19 +195,20 @@ app.prepare().then(() => {
     else notifyControllers()
 
     socket.on('midi', (msg) => {
-      if (ArrayBuffer.isView(msg)) midiOut.send(msg)
-      io.to('output').emit('midi', msg)
-      logMidi(msg)
+      if (ArrayBuffer.isView(msg)) track(msg)
+      deliver(msg)
     })
 
     socket.on('disconnect', () => {
       console.log(`[-] ${role} disconnected (${socket.id})`)
-      if (role !== 'output') notifyControllers()
+      if (role === 'output') return
+      notifyControllers()
+      if (controllerCount() === 0) releaseAll()
     })
   })
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { midiOut.close(); process.exit(0) })
+    process.on(sig, () => { releaseAll(); midiOut.close(); process.exit(0) })
   }
 
   server.listen(port, '0.0.0.0', () => {
