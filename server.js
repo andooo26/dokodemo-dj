@@ -180,6 +180,9 @@ app.prepare().then(() => {
     else if (msg.type === 'pitch_bend') console.log(`  ~ Pitch     ch:${ch} val:${msg.value}`)
   }
 
+  // 現在のポートと選べる一覧
+  const midiState = () => ({ ...midiOut.state(), ports: midiOut.ports() })
+
   // controller の接続数を output に通知する
   const controllerCount = () => io.sockets.adapter.rooms.get('controller')?.size ?? 0
   const notifyControllers = () => io.to('output').emit('controllers', controllerCount())
@@ -190,9 +193,27 @@ app.prepare().then(() => {
     socket.join(role)
     if (role === 'output') {
       socket.emit('controllers', controllerCount())
-      socket.emit('midiport', { name: midiOut.portName, virtual: midiOut.virtual })
+      socket.emit('midiport', midiState())
     }
     else notifyControllers()
+
+    // ポート一覧の取り直し (機材を後から挿した場合)
+    socket.on('midiports', () => socket.emit('midiport', midiState()))
+
+    // output からのポート切り替え。name が空なら仮想ポート
+    socket.on('setmidiport', (name) => {
+      releaseAll()
+      try {
+        midiOut.open(name || undefined)
+        console.log(`MIDI 出力を切り替え: ${midiOut.portName}${midiOut.virtual ? ' (仮想ポート)' : ''}`)
+        io.to('output').emit('midiport', midiState())
+      } catch (e) {
+        // 開けなかったときは無音にせず仮想ポートへ戻す
+        console.log(`  [!] ${e.message}。仮想ポートへ戻します`)
+        try { midiOut.open() } catch { /* 仮想ポートも開けない */ }
+        io.to('output').emit('midiport', { ...midiState(), error: e.message })
+      }
+    })
 
     socket.on('midi', (msg) => {
       if (ArrayBuffer.isView(msg)) track(msg)
@@ -228,8 +249,9 @@ app.prepare().then(() => {
     if (midiOut.portName) {
       console.log(`\nMIDI 出力: ${midiOut.portName}${midiOut.virtual ? ' (仮想ポート)' : ''}`)
       if (midiOut.virtual) console.log('  DJソフトの MIDI 設定でこのポートを選んでください')
-      if (midiOut.ports.length) console.log(`  既存ポート: ${midiOut.ports.join(', ')}`)
-      console.log('  別のポートに出す場合: MIDI_PORT="ポート名の一部" npm run dev')
+      const ports = midiOut.ports()
+      if (ports.length) console.log(`  既存ポート: ${ports.join(', ')}`)
+      console.log('  別のポートに出す場合: モニタ画面のプルダウン、または MIDI_PORT="ポート名の一部" npm run dev')
     }
 
     if (cert.ok) {

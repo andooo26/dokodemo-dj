@@ -19,7 +19,9 @@
 - HTTPS化 : mkcertにて自己署名証明書を起動時に自動生成 (`certs/`)
 - ポート : 3000 (HTTPS), 3001 (HTTP→HTTPSリダイレクト)
 - Socket.io : controller(スマホ)/output(PC モニタ)
-- MIDI出力 : controllerから受信した信号をサーバが仮想ポート `DokodemoDJ` へ送出
+- MIDI出力 : controllerから受信した信号をサーバがMIDIポートへ送出
+  - 既定は仮想ポート `DokodemoDJ`。output画面のプルダウンで既存ポートへ切り替えられる
+  - 起動時から特定のポートを使う場合は `MIDI_PORT="ポート名の一部" npm run dev`
 - リレー : 同じ信号をoutput(モニタ)にも転送
 #### MIDIメッセージ仕様
 #### メッセージ型 (MidiMsg)

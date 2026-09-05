@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { io } from 'socket.io-client'
+import { io, type Socket } from 'socket.io-client'
 import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 import { encode, decode } from '@/core/codec'
@@ -74,8 +74,17 @@ function TurntableMonitor({ angle, stopped }: { angle: number; stopped: boolean 
   )
 }
 
+type MidiPortInfo = {
+  name: string | null
+  virtual: boolean
+  ports: string[]
+  error?: string
+}
+
+const VIRTUAL_PORT_VALUE = ''
+
 export default function OutputPage() {
-  const [midiPort, setMidiPort]         = useState<{ name: string | null; virtual: boolean } | null>(null)
+  const [midiPort, setMidiPort]         = useState<MidiPortInfo | null>(null)
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
   const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
@@ -96,6 +105,7 @@ export default function OutputPage() {
 
   // コールバックから最新値を参照する
   const pitchMsbRef = useRef<[number, number]>([PITCH_CENTER >> 7, PITCH_CENTER >> 7])
+  const socketRef   = useRef<Socket | null>(null)
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
@@ -108,13 +118,15 @@ export default function OutputPage() {
       query: { role: 'output' },
       transports: ['websocket'],
     })
+    socketRef.current = socket
 
     socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
     socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
 
-    socket.on('midiport', (p: { name: string | null; virtual: boolean }) => {
+    socket.on('midiport', (p: MidiPortInfo) => {
       setMidiPort(p)
-      addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
+      if (p.error) addLog(`MIDI 切り替え失敗: ${p.error}`)
+      else addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
     })
 
     // スマホ(controller)の接続数
@@ -190,8 +202,12 @@ export default function OutputPage() {
       addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
     })
 
-    return () => { socket.disconnect() }
+    return () => { socket.disconnect(); socketRef.current = null }
   }, [])
+
+  // プルダウンで選んだポートへ切り替える
+  const changeMidiPort = (name: string) => socketRef.current?.emit('setmidiport', name)
+  const refreshMidiPorts = () => socketRef.current?.emit('midiports')
 
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col font-sans overflow-hidden">
@@ -303,12 +319,22 @@ export default function OutputPage() {
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${
                   midiPort?.name ? 'bg-lime-400' : midiPort ? 'bg-red-500' : 'bg-yellow-400'}`} />
-                <span className="text-sm truncate" title={midiPort?.name ?? ''}>
-                  {midiPort?.name
-                    ? `${midiPort.name}${midiPort.virtual ? ' (仮想)' : ''}`
-                    : midiPort ? 'ポートを開けません' : '確認中...'}
-                </span>
+                <select
+                  className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg
+                             px-2 py-1 text-sm text-white disabled:text-gray-500"
+                  disabled={!midiPort}
+                  value={midiPort?.virtual ? VIRTUAL_PORT_VALUE : midiPort?.name ?? VIRTUAL_PORT_VALUE}
+                  title={midiPort?.name ?? ''}
+                  onMouseDown={refreshMidiPorts}
+                  onChange={e => changeMidiPort(e.target.value)}
+                >
+                  <option value={VIRTUAL_PORT_VALUE}>DokodemoDJ (仮想)</option>
+                  {midiPort?.ports.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
               </div>
+              {midiPort && !midiPort.name && (
+                <span className="text-xs text-red-400">ポートを開けません</span>
+              )}
             </div>
           </div>
         </section>
