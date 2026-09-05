@@ -9,8 +9,8 @@ import { PADS, KNOBS, CUE_NOTE, PLAY_NOTE } from '@/core/mapping'
 
 // --- MediaPipe ---
 
-const WASM_PATH  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-const MODEL_PATH = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+const WASM_PATH  = '/mediapipe/wasm'
+const MODEL_PATH = '/models/hand_landmarker.task'
 
 // --- 仮想つまみゾーン (正規化座標) ---
 // 配置だけを持ち、CCは mapping から引く

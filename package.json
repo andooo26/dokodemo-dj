@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node server.js",
-    "build": "next build",
+    "dev": "node scripts/setup-mediapipe.mjs && node server.js",
+    "build": "node scripts/setup-mediapipe.mjs && next build",
     "start": "next start",
-    "mobile": "next build && NODE_ENV=production node server.js",
+    "mobile": "node scripts/setup-mediapipe.mjs && next build && NODE_ENV=production node server.js",
     "lint": "eslint",
-    "tunnel": "cloudflared tunnel --url http://localhost:3000"
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "setup:mediapipe": "node scripts/setup-mediapipe.mjs",
+    "postinstall": "node scripts/setup-mediapipe.mjs"
   },
   "dependencies": {
     "@julusian/midi": "^3.8.1",

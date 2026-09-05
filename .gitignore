@@ -46,3 +46,7 @@ next-env.d.ts
 # Claude
 CLAUDE.md
 .claude
+
+# MediaPipe assets (scripts/setup-mediapipe.mjs が生成)
+/public/mediapipe/
+/public/models/
