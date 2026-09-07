@@ -235,11 +235,14 @@ app.prepare().then(() => {
       socket.emit('roomerror', { reason: asked ? 'unknown' : 'missing' })
       return
     }
-    // MIDIを出せるブリッジは1ルームにつき1つ
+    // MIDIを出せるブリッジは1ルームにつき1つ。
+    // 回線が切れた直後の再接続では古い側の切断にまだ気づいていないので、後から来た方を正とする
     if (role === 'bridge' && room.bridge) {
-      console.log(`[x] bridge rejected  (${socket.id}) [${room.code}] 既に接続済み`)
-      socket.emit('roomerror', { reason: 'busy' })
-      return
+      const stale = room.bridge
+      room.bridge = null
+      console.log(`[~] bridge 交代  [${room.code}] 旧:${stale.id} → 新:${socket.id}`)
+      stale.emit('roomerror', { reason: 'replaced' })
+      stale.disconnect(true)
     }
 
     console.log(`[+] ${role} connected  (${socket.id}) [${room.code}]`)

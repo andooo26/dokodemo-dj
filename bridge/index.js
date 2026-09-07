@@ -69,6 +69,12 @@ socket.on('room', ({ code, joinUrl }) => {
 })
 
 socket.on('roomerror', ({ reason }) => {
+  // 交代させられた側は、別プロセスが同じルームを引き継いだということ
+  if (reason === 'replaced') {
+    console.log('  [!] 別のブリッジがこのルームを引き継ぎました。終了します')
+    panic()
+    process.exit(0)
+  }
   console.log(reason === 'busy'
     ? `  [!] ルーム ${ROOM} には既に別のブリッジが繋がっています`
     : `  [!] ルーム ${ROOM} が見つかりません。モニタ画面のコードを確認してください`)
