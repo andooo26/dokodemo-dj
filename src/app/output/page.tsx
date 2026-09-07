@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
+import QRCode from 'qrcode'
+import { currentRoom, rememberRoom, withRoom } from '@/core/room'
 import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 import { encode, decode } from '@/core/codec'
@@ -85,6 +87,9 @@ const VIRTUAL_PORT_VALUE = ''
 
 export default function OutputPage() {
   const [midiPort, setMidiPort]         = useState<MidiPortInfo | null>(null)
+  const [room, setRoom]                 = useState<string | null>(null)
+  const [qr, setQr]                     = useState<string | null>(null)
+  const [joinUrl, setJoinUrl]           = useState<string>('')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
   const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
@@ -115,10 +120,22 @@ export default function OutputPage() {
   // Socket.io
   useEffect(() => {
     const socket = io({
-      query: { role: 'output' },
+      query: { role: 'output', room: currentRoom() ?? '' },
       transports: ['websocket'],
     })
     socketRef.current = socket
+
+    // ルームコードが決まったらスマホ用のURLとQRを作る
+    socket.on('room', (p: { code: string }) => {
+      setRoom(p.code)
+      rememberRoom(p.code)
+      addLog(`ルーム ${p.code}`)
+      const url = new URL(withRoom('/touch', p.code), window.location.origin).toString()
+      setJoinUrl(url)
+      QRCode.toDataURL(url, { width: 240, margin: 1, color: { dark: '#ffffff', light: '#00000000' } })
+        .then(setQr)
+        .catch(() => setQr(null))
+    })
 
     socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
     socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
@@ -312,6 +329,19 @@ export default function OutputPage() {
                   {sockStatus !== 'connected' ? 'サーバー未接続'
                     : controllers > 0 ? `接続中 (${controllers}台)` : '未接続'}
                 </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">ルームコード</span>
+              <div className="flex items-center gap-3">
+                {qr
+                  // eslint-disable-next-line @next/next/no-img-element -- QRはdata URL
+                  ? <img src={qr} alt="接続用QR" className="w-20 h-20 shrink-0" />
+                  : <div className="w-20 h-20 shrink-0 rounded-lg bg-gray-900" />}
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-2xl font-mono tracking-[0.3em]">{room ?? '----'}</span>
+                  <span className="text-xs text-gray-500 break-all">{joinUrl}</span>
+                </div>
               </div>
             </div>
             <div className="flex flex-col gap-1.5 min-w-0">
