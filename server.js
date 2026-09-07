@@ -11,6 +11,7 @@ const path = require('path')
 const next = require('next')
 const { Server } = require('socket.io')
 const { createMidiOut } = require('./server/midi')
+const { isAllowed, createRateLimiter } = require('./server/policy')
 
 const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT || '3000', 10)
@@ -215,8 +216,18 @@ app.prepare().then(() => {
       }
     })
 
+    // 想定外のバイト列と流し込みを入口で止める
+    const allowRate = createRateLimiter()
+    let dropped = 0
+    const drop = (why) => {
+      dropped += 1
+      if (dropped === 1 || dropped % 500 === 0) console.log(`  [!] ${why} (${socket.id} 累計${dropped}件)`)
+    }
+
     socket.on('midi', (msg) => {
-      if (ArrayBuffer.isView(msg)) track(msg)
+      if (!isAllowed(msg)) return drop('未対応のMIDIを破棄しました')
+      if (!allowRate())    return drop('MIDIの送信が多すぎるため破棄しました')
+      track(msg)
       deliver(msg)
     })
 

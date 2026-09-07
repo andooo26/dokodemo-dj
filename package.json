@@ -2,6 +2,9 @@
   "name": "dokodemo-dj",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "dev": "node scripts/setup-mediapipe.mjs && node server.js",
     "build": "node scripts/setup-mediapipe.mjs && next build",
