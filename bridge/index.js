@@ -58,6 +58,8 @@ socket.on('connect', () => {
 })
 
 socket.on('room', ({ code, joinUrl }) => {
+  // 再接続時も同じルームへ戻る (次のハンドシェイクに持たせる)
+  socket.io.opts.query = { ...socket.io.opts.query, room: code }
   console.log(`\nルームコード: ${code}`)
   if (joinUrl) console.log(`モニタ: ${joinUrl}`)
   if (midiOut.portName) {

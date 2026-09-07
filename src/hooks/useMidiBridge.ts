@@ -39,6 +39,8 @@ export function useMidiBridge() {
     s.on('disconnect',    () => { setStatus('disconnected'); addLog('切断しました') })
     s.on('connect_error', () => { setStatus('disconnected'); setFailed(true) })
     s.on('room', (p: { code: string }) => {
+      // 再接続時も同じルームへ戻る
+      s.io.opts.query = { ...s.io.opts.query, room: p.code }
       setRoom(p.code)
       setRoomError(null)
       rememberRoom(p.code)

@@ -128,6 +128,8 @@ export default function OutputPage() {
 
     // ルームコードが決まったらスマホ用のURLとQRを作る
     socket.on('room', (p: { code: string }) => {
+      // 再接続時も同じルームへ戻る
+      socket.io.opts.query = { ...socket.io.opts.query, room: p.code }
       setRoom(p.code)
       rememberRoom(p.code)
       addLog(`ルーム ${p.code}`)

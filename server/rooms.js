@@ -36,6 +36,12 @@ function createRoomStore() {
     return rooms.get(code)
   }
 
+  // コードを指定して作る。サーバ再起動後にブリッジが元のルームへ戻るため
+  function claim(code) {
+    if (!rooms.has(code)) rooms.set(code, newRoom(code))
+    return rooms.get(code)
+  }
+
   // 掃除。誰も居ないまま EMPTY_TTL を過ぎた部屋を消す
   function sweep(isEmpty) {
     const now = Date.now()
@@ -48,6 +54,7 @@ function createRoomStore() {
 
   return {
     create,
+    claim,
     get:  (code) => rooms.get(code) ?? null,
     has:  (code) => rooms.has(code),
     size: () => rooms.size,
