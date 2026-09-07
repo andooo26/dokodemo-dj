@@ -6,14 +6,16 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "dev": "node scripts/setup-mediapipe.mjs && node server.js",
+    "dev": "node scripts/setup-mediapipe.mjs && node scripts/dev.mjs",
     "build": "node scripts/setup-mediapipe.mjs && next build",
     "start": "next start",
-    "mobile": "node scripts/setup-mediapipe.mjs && next build && NODE_ENV=production node server.js",
+    "mobile": "node scripts/setup-mediapipe.mjs && next build && NODE_ENV=production node scripts/dev.mjs",
     "lint": "eslint",
     "tunnel": "cloudflared tunnel --url http://localhost:3000",
     "setup:mediapipe": "node scripts/setup-mediapipe.mjs",
-    "postinstall": "node scripts/setup-mediapipe.mjs"
+    "postinstall": "node scripts/setup-mediapipe.mjs",
+    "server": "node server.js",
+    "bridge": "node bridge/index.js"
   },
   "dependencies": {
     "@julusian/midi": "^3.8.1",

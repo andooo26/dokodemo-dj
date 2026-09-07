@@ -10,12 +10,16 @@ const os = require('os')
 const path = require('path')
 const next = require('next')
 const { Server } = require('socket.io')
-const { createMidiOut } = require('./server/midi')
 const { isAllowed, createRateLimiter } = require('./server/policy')
 const { createRoomStore, normalize } = require('./server/rooms')
 
 const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT || '3000', 10)
+
+// ローカル運用ではモニタがコード無しでもブリッジのルームに入れる。
+// 公開時は他人のルームに紛れ込まないよう必ずコードを要求する。
+const LOCAL = process.env.LOCAL_MODE ? process.env.LOCAL_MODE === '1' : dev
+const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '')
 
 const CERT_DIR  = path.join(__dirname, 'certs')
 const KEY_FILE  = path.join(CERT_DIR, 'dev-key.pem')
@@ -84,10 +88,9 @@ function setupCert() {
 console.log('\n=== どこでもDJ ===')
 const cert   = setupCert()
 const scheme = cert.ok ? 'https' : 'http'
+const BASE_URL = PUBLIC_URL || `${scheme}://localhost:${port}`
 
 // サーバ
-
-const midiOut = createMidiOut()
 
 const app    = next({ dev })
 const handle = app.getRequestHandler()
@@ -124,9 +127,9 @@ app.prepare().then(() => {
   const rooms = createRoomStore()
   const PITCH_CENTER = 8192
 
-  // MIDIポートと、同じルームのモニタへ送る
+  // ルームのブリッジ (PC側) と、同じルームのモニタへ送る
   const deliver = (room, msg) => {
-    if (ArrayBuffer.isView(msg)) midiOut.send(msg)
+    room.bridge?.emit('midi', msg)
     io.to(`${room.code}:output`).emit('midi', msg)
     logMidi(room, msg)
   }
@@ -162,6 +165,13 @@ app.prepare().then(() => {
 
   const releaseEverything = () => rooms.codes().forEach(c => releaseAll(rooms.get(c)))
 
+  // ローカル運用の近道。ブリッジが1つだけならモニタはそこへ入る
+  const soleBridgedRoom = () => {
+    if (!LOCAL) return null
+    const bridged = rooms.codes().map(c => rooms.get(c)).filter(r => r.bridge)
+    return bridged.length === 1 ? bridged[0] : null
+  }
+
   // 3バイトのMIDIでも旧来のJSONでもログに出せるようにする
   const logMidi = (room, msg) => {
     const b = ArrayBuffer.isView(msg) ? msg : null
@@ -184,8 +194,8 @@ app.prepare().then(() => {
     else if (msg.type === 'pitch_bend') console.log(`  ${tag} ~ Pitch     ch:${ch} val:${msg.value}`)
   }
 
-  // 現在のポートと選べる一覧
-  const midiState = () => ({ ...midiOut.state(), ports: midiOut.ports() })
+  // ブリッジから届いた最新のポート状態。未接続なら空で返す
+  const midiState = (room) => room.midiport ?? { name: null, virtual: false, ports: [], bridge: false }
 
   // ルーム内の controller の接続数を、同じルームの output に通知する
   const memberCount = (code, role) => io.sockets.adapter.rooms.get(`${code}:${role}`)?.size ?? 0
@@ -193,49 +203,60 @@ app.prepare().then(() => {
 
   // 誰も居ないルームを片付ける
   setInterval(() => rooms.sweep(code =>
-    memberCount(code, 'controller') === 0 && memberCount(code, 'output') === 0), 60 * 1000).unref()
+    !rooms.get(code).bridge &&
+    memberCount(code, 'controller') === 0 &&
+    memberCount(code, 'output') === 0), 60 * 1000).unref()
 
   io.on('connection', (socket) => {
     const role = socket.handshake.query.role || 'unknown'
     const asked = normalize(socket.handshake.query.room)
 
-    // モニタはルームを持っていなければ発行する。スマホは既存ルームにしか入れない
+    // モニタとブリッジはルームを発行できる。スマホは既存ルームにしか入れない
     let room = asked ? rooms.get(asked) : null
-    if (!room && role === 'output') room = rooms.create()
+    if (!room && !asked && role === 'output') room = soleBridgedRoom()
+    if (!room && !asked && (role === 'output' || role === 'bridge')) room = rooms.create()
 
     if (!room) {
       console.log(`[x] ${role} rejected  (${socket.id}) room=${asked ?? '(なし)'}`)
       socket.emit('roomerror', { reason: asked ? 'unknown' : 'missing' })
       return
     }
+    // MIDIを出せるブリッジは1ルームにつき1つ
+    if (role === 'bridge' && room.bridge) {
+      console.log(`[x] bridge rejected  (${socket.id}) [${room.code}] 既に接続済み`)
+      socket.emit('roomerror', { reason: 'busy' })
+      return
+    }
 
     console.log(`[+] ${role} connected  (${socket.id}) [${room.code}]`)
     socket.join(`${room.code}:${role}`)
-    socket.emit('room', { code: room.code })
+    socket.emit('room', { code: room.code, joinUrl: `${BASE_URL}/output?room=${room.code}` })
 
-    if (role === 'output') {
+    if (role === 'bridge') {
+      room.bridge = socket
+      // ブリッジが繋がったらモニタへ知らせる
+      socket.on('midiport', (p) => {
+        room.midiport = { ...p, bridge: true }
+        io.to(`${room.code}:output`).emit('midiport', room.midiport)
+      })
+    }
+    else if (role === 'output') {
       socket.emit('controllers', memberCount(room.code, 'controller'))
-      socket.emit('midiport', midiState())
+      socket.emit('midiport', midiState(room))
     }
     else notifyControllers(room.code)
 
-    // ポート一覧の取り直し (機材を後から挿した場合)
-    socket.on('midiports', () => socket.emit('midiport', midiState()))
-
-    // output からのポート切り替え。name が空なら仮想ポート
-    socket.on('setmidiport', (name) => {
+    // ポートの一覧取得と切り替えはブリッジ側の仕事なので、そのまま渡す
+    socket.on('midiports', () => {
       if (role !== 'output') return
-      releaseEverything()
-      try {
-        midiOut.open(name || undefined)
-        console.log(`MIDI 出力を切り替え: ${midiOut.portName}${midiOut.virtual ? ' (仮想ポート)' : ''}`)
-        io.emit('midiport', midiState())
-      } catch (e) {
-        // 開けなかったときは無音にせず仮想ポートへ戻す
-        console.log(`  [!] ${e.message}。仮想ポートへ戻します`)
-        try { midiOut.open() } catch { /* 仮想ポートも開けない */ }
-        io.emit('midiport', { ...midiState(), error: e.message })
-      }
+      if (room.bridge) room.bridge.emit('midiports')
+      else socket.emit('midiport', midiState(room))
+    })
+
+    socket.on('setmidiport', (name) => {
+      if (role !== 'output' || !room.bridge) return
+      releaseAll(room)
+      room.bridge.emit('setmidiport', name)
     })
 
     // 想定外のバイト列と流し込みを入口で止める
@@ -256,6 +277,14 @@ app.prepare().then(() => {
 
     socket.on('disconnect', () => {
       console.log(`[-] ${role} disconnected (${socket.id}) [${room.code}]`)
+      if (role === 'bridge' && room.bridge === socket) {
+        room.bridge = null
+        room.midiport = null
+        room.activeNotes.clear()   // 解放はブリッジ側が自分でやる
+        room.bentChannels.clear()
+        io.to(`${room.code}:output`).emit('midiport', midiState(room))
+        return
+      }
       if (role === 'output') return
       notifyControllers(room.code)
       if (memberCount(room.code, 'controller') === 0) releaseAll(room)
@@ -263,7 +292,7 @@ app.prepare().then(() => {
   })
 
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.on(sig, () => { releaseEverything(); midiOut.close(); process.exit(0) })
+    process.on(sig, () => { releaseEverything(); process.exit(0) })
   }
 
   server.listen(port, '0.0.0.0', () => {
@@ -281,13 +310,6 @@ app.prepare().then(() => {
     console.log(`スマホ (コントローラー): ${scheme}://${HOST}:${port}/touch?room=コード`)
     console.log(`スマホ (AR モード):      ${scheme}://${HOST}:${port}/ar?room=コード`)
 
-    if (midiOut.portName) {
-      console.log(`\nMIDI 出力: ${midiOut.portName}${midiOut.virtual ? ' (仮想ポート)' : ''}`)
-      if (midiOut.virtual) console.log('  DJソフトの MIDI 設定でこのポートを選んでください')
-      const ports = midiOut.ports()
-      if (ports.length) console.log(`  既存ポート: ${ports.join(', ')}`)
-      console.log('  別のポートに出す場合: モニタ画面のプルダウン、または MIDI_PORT="ポート名の一部" npm run dev')
-    }
 
     if (cert.ok) {
       console.log(`\nスマホで警告が出る場合はルート CA をインストール:`)

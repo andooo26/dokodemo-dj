@@ -80,6 +80,7 @@ type MidiPortInfo = {
   name: string | null
   virtual: boolean
   ports: string[]
+  bridge?: boolean   // PC側ブリッジが繋がっているか
   error?: string
 }
 
@@ -142,8 +143,9 @@ export default function OutputPage() {
 
     socket.on('midiport', (p: MidiPortInfo) => {
       setMidiPort(p)
-      if (p.error) addLog(`MIDI 切り替え失敗: ${p.error}`)
-      else addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
+      if (p.error)       addLog(`MIDI 切り替え失敗: ${p.error}`)
+      else if (!p.bridge) addLog('PC側ブリッジが未接続です')
+      else                addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
     })
 
     // スマホ(controller)の接続数
@@ -352,7 +354,7 @@ export default function OutputPage() {
                 <select
                   className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg
                              px-2 py-1 text-sm text-white disabled:text-gray-500"
-                  disabled={!midiPort}
+                  disabled={!midiPort?.bridge}
                   value={midiPort?.virtual ? VIRTUAL_PORT_VALUE : midiPort?.name ?? VIRTUAL_PORT_VALUE}
                   title={midiPort?.name ?? ''}
                   onMouseDown={refreshMidiPorts}
@@ -362,7 +364,12 @@ export default function OutputPage() {
                   {midiPort?.ports.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
-              {midiPort && !midiPort.name && (
+              {midiPort && !midiPort.bridge && (
+                <span className="text-xs text-red-400">
+                  PC側ブリッジが未接続です (npm run bridge)
+                </span>
+              )}
+              {midiPort?.bridge && !midiPort.name && (
                 <span className="text-xs text-red-400">ポートを開けません</span>
               )}
             </div>

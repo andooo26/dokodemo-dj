@@ -22,6 +22,8 @@ function createRoomStore() {
 
   const newRoom = (code) => ({
     code,
+    bridge:       null,        // MIDIを出すPC側のプロセス
+    midiport:     null,        // ブリッジから届いた最新のポート状態
     activeNotes:  new Set(),   // 鳴りっぱなし防止用
     bentChannels: new Set(),
     emptySince:   Date.now(),
