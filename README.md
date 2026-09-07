@@ -14,15 +14,47 @@
 | サーバー           | Node.js                     |
 | 言語               | TypeScript                  |
 
+## 構成
+2つのプロセスに分かれている。
+
+| プロセス | 役割 | 置き場所 |
+| -------- | ---- | -------- |
+| サーバ (`server.js`) | ルーム管理・検証・リレー。MIDIは扱わない | ローカルでもクラウドでも可 |
+| ブリッジ (`bridge/`) | 受け取った信号を手元のMIDIポートへ出す | 必ず音を出すPC上 |
+
+MIDIはOSのポートを開く必要があるため、ブリッジだけはローカルから動かせない。
+サーバを公開する場合も、ブリッジは各自のPCで動かして同じルームに繋ぐ。
+
+### ルーム
+1ルーム = 1つのDJセット。モニタ画面に4文字のコードとQRが出るので、スマホはそれを読んで参加する。
+コードを持たないスマホは接続できない。ルームをまたいで信号が漏れることはない。
+
+ローカル (`LOCAL_MODE=1`, 開発時の既定) では、ブリッジが1つだけならモニタはコード無しでもそこに入る。
+公開時 (`LOCAL_MODE=0`) はこの近道は無効で、常にコードが要る。
+
 ## 技術仕様
 ### サーバ
-- HTTPS化 : mkcertにて自己署名証明書を起動時に自動生成 (`certs/`)
+- HTTPS化 : ローカルのみ。mkcertにて自己署名証明書を起動時に自動生成 (`certs/`)。公開時はプラットフォーム側でTLSを終端する前提
 - ポート : 3000 (HTTPS), 3001 (HTTP→HTTPSリダイレクト)
-- Socket.io : controller(スマホ)/output(PC モニタ)
-- MIDI出力 : controllerから受信した信号をサーバがMIDIポートへ送出
-  - 既定は仮想ポート `DokodemoDJ`。output画面のプルダウンで既存ポートへ切り替えられる
-  - 起動時から特定のポートを使う場合は `MIDI_PORT="ポート名の一部" npm run dev`
-- リレー : 同じ信号をoutput(モニタ)にも転送
+- Socket.io : controller(スマホ) / output(PCモニタ) / bridge(MIDI出力)
+- 検証 : controllerから届く3バイトを `src/core/mapping.ts` のホワイトリストで照合し、500msg/秒(バースト1000)で制限
+- リレー : 検証を通った信号をブリッジと同ルームのモニタへ転送
+
+### ブリッジ
+- MIDI出力 : 既定は仮想ポート `DokodemoDJ`。モニタ画面のプルダウンで既存ポートへ切り替えられる
+- 起動時から特定のポートを使う場合は `MIDI_PORT="ポート名の一部" npm run bridge`
+- サーバとの接続が切れたら、自分が鳴らした音を必ず戻す
+
+### 環境変数
+| 変数 | 対象 | 内容 |
+| ---- | ---- | ---- |
+| `PORT` | サーバ | 待ち受けポート (既定 3000) |
+| `PUBLIC_URL` | サーバ | 公開URL。案内メッセージに使う |
+| `LOCAL_MODE` | サーバ | `1` でローカル運用 (証明書自動生成・コード無し参加)。既定は開発時のみ `1` |
+| `LOG_MIDI` | サーバ | `1` でMIDIを1件ずつログ出力。既定は `LOCAL_MODE` と同じ |
+| `SERVER_URL` | ブリッジ | 接続先サーバ (既定 `https://localhost:3000`) |
+| `DJ_ROOM` | ブリッジ | 参加するルームコード。省略すると新規発行 |
+| `MIDI_PORT` | ブリッジ | 開くMIDIポート名の一部 |
 #### MIDIメッセージ仕様
 #### メッセージ型 (MidiMsg)
 ```
@@ -121,17 +153,21 @@ number }
 ```bash
 npm install
 brew install mkcert && mkcert -install   # 初回のみ
-npm run dev                              # 本番相当は npm run mobile
+npm run dev                              # サーバとブリッジをまとめて起動
 ```
 
-証明書は `npm run dev` が自動でセットアップするので、手動発行は不要。
-起動時にアクセス用URLがターミナルに表示される。
+`npm run dev` はサーバとブリッジの両方を立ち上げる。片方だけ動かす場合は `npm run server` / `npm run bridge`。
+証明書とMediaPipeのアセットは自動でセットアップされる。
 
 | 用途             | URL                        |
 | ---------------- | -------------------------- |
-| スマホUI         | `https://<PCのIP>:3000/touch`   |
-| ARモード         | `https://<PCのIP>:3000/ar` |
 | PC版UI (モニタ)   | `https://localhost:3000/output` |
+| スマホUI         | `https://<PCのIP>:3000/touch?room=コード` |
+| ARモード         | `https://<PCのIP>:3000/ar?room=コード` |
+
+モニタを開くとルームコードとQRが出る。スマホはQRを読めばコード付きのURLに飛ぶ。
+
+Node は 22.18 以上が必要 (サーバが `src/core/mapping.ts` を直接読むため)。
 
 ### 証明書の自動セットアップ
 `server.js` が起動時に以下を行う。
@@ -158,3 +194,26 @@ npm run tunnel   # cloudflared が必要
 
 `https://xxx.trycloudflare.com` が発行され、正規の証明書で接続できる。
 通信がCloudflare経由になるためMIDIに遅延が乗る点に注意。
+
+## サーバを公開して使う
+サーバだけをクラウドに置き、ブリッジは手元のPCで動かす。
+
+```bash
+docker build -t dokodemo-dj .
+docker run -p 3000:3000 -e PUBLIC_URL=https://example.com dokodemo-dj
+```
+
+イメージにはMIDIのネイティブモジュールを含めない (`npm ci --omit=optional`)。
+Socket.ioと常駐状態を持つので、サーバーレスではなく常駐Nodeが動くホストが要る。
+複数インスタンスにする場合はスティッキーセッションかRedisアダプタが別途必要。
+
+手元のPCからは次のように繋ぐ。
+
+```bash
+SERVER_URL=https://example.com DJ_ROOM=ABCD npm run bridge
+```
+
+### 既知の制約
+クラウド経由になるとスマホ→PC間に往復のレイテンシが乗る。
+体感で問題になる場合は、スマホとPCをWebRTC DataChannelで直結し、
+サーバをシグナリングだけに使う構成が必要になる (未実装)。

@@ -12,6 +12,7 @@ const next = require('next')
 const { Server } = require('socket.io')
 const { isAllowed, createRateLimiter } = require('./server/policy')
 const { createRoomStore, normalize } = require('./server/rooms')
+const { serveAsset } = require('./server/static')
 
 const dev  = process.env.NODE_ENV !== 'production'
 const port = parseInt(process.env.PORT || '3000', 10)
@@ -20,6 +21,11 @@ const port = parseInt(process.env.PORT || '3000', 10)
 // 公開時は他人のルームに紛れ込まないよう必ずコードを要求する。
 const LOCAL = process.env.LOCAL_MODE ? process.env.LOCAL_MODE === '1' : dev
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, '')
+
+// 公開環境では TLS はプラットフォーム側で終端する。証明書の面倒を見るのはローカルだけ
+const NEED_CERT = LOCAL
+// MIDI の1メッセージごとのログは、公開環境だと量が多すぎる
+const LOG_MIDI = process.env.LOG_MIDI ? process.env.LOG_MIDI === '1' : LOCAL
 
 const CERT_DIR  = path.join(__dirname, 'certs')
 const KEY_FILE  = path.join(CERT_DIR, 'dev-key.pem')
@@ -86,7 +92,7 @@ function setupCert() {
 }
 
 console.log('\n=== どこでもDJ ===')
-const cert   = setupCert()
+const cert   = NEED_CERT ? setupCert() : { ok: false, reason: 'not-needed' }
 const scheme = cert.ok ? 'https' : 'http'
 const BASE_URL = PUBLIC_URL || `${scheme}://localhost:${port}`
 
@@ -97,8 +103,13 @@ const handle = app.getRequestHandler()
 
 app.prepare().then(() => {
   const handler = (req, res) => {
+    const { pathname } = parse(req.url)
+
+    // MediaPipe のアセットは圧縮済みを長期キャッシュで返す
+    if (serveAsset(req, res, pathname)) return
+
     // スマホ用にルート CA を配る
-    if (cert.ok && parse(req.url).pathname === '/rootCA.pem') {
+    if (cert.ok && pathname === '/rootCA.pem') {
       res.writeHead(200, {
         'Content-Type': 'application/x-x509-ca-cert',
         'Content-Disposition': 'attachment; filename="rootCA.pem"',
@@ -111,7 +122,7 @@ app.prepare().then(() => {
 
   const server = cert.ok ? createServer(cert.ssl, handler) : createHttpServer(handler)
 
-  // HTTPS のときだけリダイレクトを用意する
+  // ローカルで HTTPS のときだけリダイレクトを用意する
   if (cert.ok) {
     createHttpServer((req, res) => {
       const host = (req.headers.host || HOST).replace(/:\d+$/, '')
@@ -174,6 +185,7 @@ app.prepare().then(() => {
 
   // 3バイトのMIDIでも旧来のJSONでもログに出せるようにする
   const logMidi = (room, msg) => {
+    if (!LOG_MIDI) return
     const b = ArrayBuffer.isView(msg) ? msg : null
     const m = b
       ? { status: b[0] & 0xf0, channel: b[0] & 0x0f, d1: b[1], d2: b[2] }
@@ -296,6 +308,14 @@ app.prepare().then(() => {
   }
 
   server.listen(port, '0.0.0.0', () => {
+    if (!NEED_CERT) {
+      console.log(`\n公開モードで起動しました (port ${port})`)
+      console.log(`  モニタ: ${BASE_URL}/output`)
+      console.log('  PC側で MIDI ブリッジを動かしてください:')
+      console.log(`    SERVER_URL=${BASE_URL} DJ_ROOM=コード npm run bridge`)
+      return
+    }
+
     if (!cert.ok) {
       console.log(cert.reason === 'mkcert-missing'
         ? '\n  [!] mkcert が見つからないため HTTP で起動しました。'
