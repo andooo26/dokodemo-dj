@@ -225,8 +225,8 @@ app.prepare().then(() => {
 
     // モニタとブリッジはルームを発行できる。スマホは既存ルームにしか入れない
     let room = asked ? rooms.get(asked) : null
-    // サーバを再起動するとルームは消えるので、ブリッジには元のコードで作り直させる
-    if (!room && asked && role === 'bridge') room = rooms.claim(asked)
+    // サーバを再起動するとルームは消えるので、元のコードで作り直させる
+    if (!room && asked && (role === 'bridge' || role === 'output')) room = rooms.claim(asked)
     if (!room && !asked && role === 'output') room = soleBridgedRoom()
     if (!room && !asked && (role === 'output' || role === 'bridge')) room = rooms.create()
 
