@@ -1,10 +1,10 @@
 // controller から届く MIDI を検証する。
-// 許可する番号は src/core/mapping.ts をそのまま参照する。
+// 許可する番号は src/core/mapping.js をそのまま参照する。
 
 const {
   PAD_NOTES, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
   PITCH_CC, PITCH_CC_LSB, DECK1, DECK2,
-} = require('../src/core/mapping.ts')
+} = require('../src/core/mapping.js')
 
 const NOTE_OFF = 0x80
 const NOTE_ON  = 0x90
