@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import QRCode from 'qrcode'
-import { currentRoom, rememberRoom, withRoom } from '@/core/room'
+import { currentRoom, rememberRoom, forgetRoom, withRoom } from '@/core/room'
 import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 import { encode, decode } from '@/core/codec'
@@ -92,6 +92,7 @@ export default function OutputPage() {
   const [qr, setQr]                     = useState<string | null>(null)
   const [joinUrl, setJoinUrl]           = useState<string>('')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
+  const [roomError, setRoomError]       = useState<string | null>(null)
   const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
   const [activePadsDeck1, setActivePadsDeck1]  = useState<Set<number>>(new Set())
@@ -140,7 +141,19 @@ export default function OutputPage() {
         .catch(() => setQr(null))
     })
 
-    socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
+    // 入れなかったときは黙って止まらず、画面に理由を出す
+    socket.on('roomerror', (p: { reason: string }) => {
+      const msg = p.reason === 'unknown'
+        ? 'このルームは既に終了しています'
+        : p.reason === 'busy'
+          ? 'このルームは既に使われています'
+          : 'ルームコードが必要です'
+      setRoomError(msg)
+      addLog(msg)
+      socket.disconnect()
+    })
+
+    socket.on('connect',    () => { setSockStatus('connected'); setRoomError(null); addLog('サーバーに接続しました') })
     socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
 
     socket.on('midiport', (p: MidiPortInfo) => {
@@ -344,7 +357,18 @@ export default function OutputPage() {
                   : <div className="w-20 h-20 shrink-0 rounded-lg bg-gray-900" />}
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-2xl font-mono tracking-[0.3em]">{room ?? '----'}</span>
-                  <span className="text-xs text-gray-500 break-all">{joinUrl}</span>
+                  {roomError
+                    ? <>
+                        <span className="text-xs text-red-400">{roomError}</span>
+                        <button
+                          onClick={() => { forgetRoom(); window.location.href = '/output' }}
+                          className="mt-1 self-start text-xs px-3 py-1 rounded-lg
+                                     bg-gray-800 hover:bg-gray-700 border border-gray-700"
+                        >
+                          新しいルームを開始
+                        </button>
+                      </>
+                    : <span className="text-xs text-gray-500 break-all">{joinUrl}</span>}
                 </div>
               </div>
             </div>

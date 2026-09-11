@@ -31,6 +31,15 @@ export function rememberRoom(code: string) {
   }
 }
 
+// 覚えているコードを捨てる。消えたルームを掴んだままにしないため
+export function forgetRoom() {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.removeItem(STORAGE_KEY) } catch { /* プライベートモード */ }
+  const url = new URL(window.location.href)
+  url.searchParams.delete(ROOM_PARAM)
+  window.history.replaceState(null, '', url)
+}
+
 // ページ間リンクにコードを引き継ぐ
 export function withRoom(href: string, code: string | null): string {
   if (!code) return href
