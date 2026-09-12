@@ -130,7 +130,16 @@ export default function OutputPage() {
 
   // ブラウザ側の MIDI 出口を用意する
   useEffect(() => {
-    const sink = createWebMidiSink(setWebMidi)
+    const sink = createWebMidiSink(s => {
+      setWebMidi(s)
+      // 鳴らしていたポートが消えたらブリッジへ戻す
+      if (ownedRef.current && !s.name) {
+        ownedRef.current = false
+        setOwned(false)
+        socketRef.current?.emit('sink', 'bridge')
+        addLog(s.error ?? 'ブラウザ出力を終了しました')
+      }
+    })
     sinkRef.current = sink
 
     sink.enable().then(s => {

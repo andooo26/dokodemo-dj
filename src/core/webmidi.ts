@@ -148,10 +148,16 @@ export function createWebMidiSink(onChange?: (state: WebMidiState) => void) {
       return state()
     }
 
-    // 抜き差しに追従し、記憶したポートが現れたら開く
+    // 抜き差しに追従する
     const granted = access
     granted.onstatechange = () => {
-      if (!out) {
+      // 開いていたポートが消えたら手放す。もう届かないので記録も捨てる
+      if (out && out.state === 'disconnected') {
+        activeNotes.clear()
+        bentChannels.clear()
+        out = null
+        error = 'MIDI ポートが切断されました'
+      } else if (!out) {
         const saved = remembered()
         if (saved) { try { open(saved) } catch { /* まだ現れていない */ } }
       }
