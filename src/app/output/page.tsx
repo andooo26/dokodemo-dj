@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
+import QRCode from 'qrcode'
+import { currentRoom, rememberRoom, forgetRoom, withRoom } from '@/core/room'
 import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 import { encode, decode } from '@/core/codec'
@@ -78,6 +80,7 @@ type MidiPortInfo = {
   name: string | null
   virtual: boolean
   ports: string[]
+  bridge?: boolean   // PC側ブリッジが繋がっているか
   error?: string
 }
 
@@ -85,7 +88,11 @@ const VIRTUAL_PORT_VALUE = ''
 
 export default function OutputPage() {
   const [midiPort, setMidiPort]         = useState<MidiPortInfo | null>(null)
+  const [room, setRoom]                 = useState<string | null>(null)
+  const [qr, setQr]                     = useState<string | null>(null)
+  const [joinUrl, setJoinUrl]           = useState<string>('')
   const [sockStatus, setSockStatus]     = useState<'disconnected' | 'connected'>('disconnected')
+  const [roomError, setRoomError]       = useState<string | null>(null)
   const [controllers, setControllers]   = useState(0)
   const [log, setLog]                          = useState<string[]>([])
   const [activePadsDeck1, setActivePadsDeck1]  = useState<Set<number>>(new Set())
@@ -115,18 +122,45 @@ export default function OutputPage() {
   // Socket.io
   useEffect(() => {
     const socket = io({
-      query: { role: 'output' },
+      query: { role: 'output', room: currentRoom() ?? '' },
       transports: ['websocket'],
     })
     socketRef.current = socket
 
-    socket.on('connect',    () => { setSockStatus('connected'); addLog('サーバーに接続しました') })
+    // ルームコードが決まったらスマホ用のURLとQRを作る
+    socket.on('room', (p: { code: string }) => {
+      // 再接続時も同じルームへ戻る
+      socket.io.opts.query = { ...socket.io.opts.query, room: p.code }
+      setRoom(p.code)
+      rememberRoom(p.code)
+      addLog(`ルーム ${p.code}`)
+      const url = new URL(withRoom('/touch', p.code), window.location.origin).toString()
+      setJoinUrl(url)
+      QRCode.toDataURL(url, { width: 240, margin: 1, color: { dark: '#ffffff', light: '#00000000' } })
+        .then(setQr)
+        .catch(() => setQr(null))
+    })
+
+    // 入れなかったときは黙って止まらず、画面に理由を出す
+    socket.on('roomerror', (p: { reason: string }) => {
+      const msg = p.reason === 'unknown'
+        ? 'このルームは既に終了しています'
+        : p.reason === 'busy'
+          ? 'このルームは既に使われています'
+          : 'ルームコードが必要です'
+      setRoomError(msg)
+      addLog(msg)
+      socket.disconnect()
+    })
+
+    socket.on('connect',    () => { setSockStatus('connected'); setRoomError(null); addLog('サーバーに接続しました') })
     socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
 
     socket.on('midiport', (p: MidiPortInfo) => {
       setMidiPort(p)
-      if (p.error) addLog(`MIDI 切り替え失敗: ${p.error}`)
-      else addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
+      if (p.error)       addLog(`MIDI 切り替え失敗: ${p.error}`)
+      else if (!p.bridge) addLog('PC側ブリッジが未接続です')
+      else                addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
     })
 
     // スマホ(controller)の接続数
@@ -315,6 +349,30 @@ export default function OutputPage() {
               </div>
             </div>
             <div className="flex flex-col gap-1.5 min-w-0">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">ルームコード</span>
+              <div className="flex items-center gap-3">
+                {qr
+                  // eslint-disable-next-line @next/next/no-img-element -- QRはdata URL
+                  ? <img src={qr} alt="接続用QR" className="w-20 h-20 shrink-0" />
+                  : <div className="w-20 h-20 shrink-0 rounded-lg bg-gray-900" />}
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-2xl font-mono tracking-[0.3em]">{room ?? '----'}</span>
+                  {roomError
+                    ? <>
+                        <span className="text-xs text-red-400">{roomError}</span>
+                        <button
+                          onClick={() => { forgetRoom(); window.location.href = '/output' }}
+                          className="mt-1 self-start text-xs px-3 py-1 rounded-lg
+                                     bg-gray-800 hover:bg-gray-700 border border-gray-700"
+                        >
+                          新しいルームを開始
+                        </button>
+                      </>
+                    : <span className="text-xs text-gray-500 break-all">{joinUrl}</span>}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 min-w-0">
               <span className="text-xs text-gray-400 uppercase tracking-widest">MIDIポート</span>
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${
@@ -322,7 +380,7 @@ export default function OutputPage() {
                 <select
                   className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg
                              px-2 py-1 text-sm text-white disabled:text-gray-500"
-                  disabled={!midiPort}
+                  disabled={!midiPort?.bridge}
                   value={midiPort?.virtual ? VIRTUAL_PORT_VALUE : midiPort?.name ?? VIRTUAL_PORT_VALUE}
                   title={midiPort?.name ?? ''}
                   onMouseDown={refreshMidiPorts}
@@ -332,7 +390,12 @@ export default function OutputPage() {
                   {midiPort?.ports.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
-              {midiPort && !midiPort.name && (
+              {midiPort && !midiPort.bridge && (
+                <span className="text-xs text-red-400">
+                  PC側ブリッジが未接続です (npm run bridge)
+                </span>
+              )}
+              {midiPort?.bridge && !midiPort.name && (
                 <span className="text-xs text-red-400">ポートを開けません</span>
               )}
             </div>

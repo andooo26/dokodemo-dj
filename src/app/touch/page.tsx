@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
+import { RoomGate } from '@/components/RoomGate'
+import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import {
@@ -291,9 +293,11 @@ export default function Controller() {
   const [activeDeck, setActiveDeck] = useState(0)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
-  const { status, log, connect, send, failed } = useMidiBridge()
+  const { status, log, connect, send, failed, room, roomError } = useMidiBridge()
 
   useEffect(() => { setMounted(true) }, [])
+
+  if (roomError) return <RoomGate reason={roomError} onSubmit={connect} />
 
   return (
     <main className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6">
@@ -302,7 +306,7 @@ export default function Controller() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-lg font-bold flex-shrink-0">どこでもDJ</h1>
         <div className="flex gap-2 flex-shrink-0">
-          <LinkButton href="/ar">AR</LinkButton>
+          <LinkButton href={withRoom('/ar', room)}>AR</LinkButton>
           <ConnectButton
             disabled={!mounted || status === 'connecting'}
             status={status}

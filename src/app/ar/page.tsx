@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
+import { RoomGate } from '@/components/RoomGate'
+import { withRoom } from '@/core/room'
 import type { HandLandmarker } from '@mediapipe/tasks-vision'
 import { PADS, KNOBS, CUE_NOTE, PLAY_NOTE } from '@/core/mapping'
 
@@ -81,7 +83,7 @@ export default function ARPage() {
   const [cameraError, setCameraError] = useState('')
   const [activeLabels, setActiveLabels] = useState<string[]>([])
 
-  const { status, connect, send, failed } = useMidiBridge()
+  const { status, connect, send, failed, room, roomError } = useMidiBridge()
   useEffect(() => { activeDeckRef.current = activeDeck }, [activeDeck])
 
   const sendRef = useRef(send)
@@ -432,7 +434,7 @@ export default function ARPage() {
 
       {/* ヘッダー */}
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent">
-        <LinkButton href="/touch">← コントローラーに戻る</LinkButton>
+        <LinkButton href={withRoom('/touch', room)}>← コントローラーに戻る</LinkButton>
         <span className="text-white text-sm font-bold">ARモード</span>
       </div>
 
@@ -462,11 +464,14 @@ export default function ARPage() {
         </div>
       )}
 
+      {/* ルーム未参加 */}
+      {roomError && <RoomGate reason={roomError} onSubmit={connect} overlay />}
+
       {/* カメラエラー */}
       {cameraError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 px-8 text-center">
           <p className="text-red-400">{cameraError}</p>
-          <LinkButton href="/touch">タッチUIに戻る</LinkButton>
+          <LinkButton href={withRoom('/touch', room)}>タッチUIに戻る</LinkButton>
         </div>
       )}
     </div>

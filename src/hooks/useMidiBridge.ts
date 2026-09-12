@@ -2,15 +2,19 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { encode, dedupKey, valueOf } from '@/core/codec'
 import type { MidiMsg } from '@/core/codec'
+import { currentRoom, rememberRoom } from '@/core/room'
 
 export type { MidiMsg }
 
 export type Status = 'disconnected' | 'connecting' | 'connected'
+export type RoomError = 'missing' | 'unknown' | null
 
 export function useMidiBridge() {
   const [status, setStatus]   = useState<Status>('disconnected')
   const [log, setLog]         = useState<string[]>([])
   const [failed, setFailed]   = useState(false)
+  const [room, setRoom]       = useState<string | null>(null)
+  const [roomError, setRoomError] = useState<RoomError>(null)
   const socketRef             = useRef<Socket | null>(null)
   const lastSentRef           = useRef<Map<string, number>>(new Map())
 
@@ -19,15 +23,35 @@ export function useMidiBridge() {
     setLog((prev) => [`[${ts}] ${msg}`, ...prev].slice(0, 30))
   }, [])
 
-  const connect = useCallback(() => {
+  // code を渡すと、そのルームへ入り直す
+  const connect = useCallback((code?: string) => {
+    const target = code ?? currentRoom()
     socketRef.current?.disconnect()
     setStatus('connecting')
     setFailed(false)
+    setRoomError(null)
     lastSentRef.current.clear()
-    const s = io({ query: { role: 'controller' }, transports: ['websocket'], timeout: 3000 })
+
+    if (!target) { setStatus('disconnected'); setRoomError('missing'); return }
+
+    const s = io({ query: { role: 'controller', room: target }, transports: ['websocket'], timeout: 3000 })
     s.on('connect',       () => { setStatus('connected');    setFailed(false); addLog('接続しました') })
     s.on('disconnect',    () => { setStatus('disconnected'); addLog('切断しました') })
     s.on('connect_error', () => { setStatus('disconnected'); setFailed(true) })
+    s.on('room', (p: { code: string }) => {
+      // 再接続時も同じルームへ戻る
+      s.io.opts.query = { ...s.io.opts.query, room: p.code }
+      setRoom(p.code)
+      setRoomError(null)
+      rememberRoom(p.code)
+      addLog(`ルーム ${p.code} に参加しました`)
+    })
+    s.on('roomerror', (p: { reason: 'missing' | 'unknown' }) => {
+      setStatus('disconnected')
+      setRoomError(p.reason)
+      addLog(p.reason === 'unknown' ? 'ルームが見つかりません' : 'ルームコードが必要です')
+      s.disconnect()
+    })
     socketRef.current = s
   }, [addLog])
 
@@ -58,5 +82,5 @@ export function useMidiBridge() {
 
   useEffect(() => () => { socketRef.current?.disconnect() }, [])
 
-  return { status, log, connect, send, failed }
+  return { status, log, connect, send, failed, room, roomError }
 }

@@ -1,0 +1,6 @@
+node_modules
+.next
+certs
+.git
+public/mediapipe
+public/models
