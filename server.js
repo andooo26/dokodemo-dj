@@ -224,6 +224,7 @@ app.prepare().then(() => {
     room.sinkOwner = owner
     console.log(`[~] 出力先: ${next}${owner ? ` (${owner.id})` : ''} [${room.code}]`)
     notifySink(room)
+    room.bridge?.emit('sink', next)
   }
 
   // ルーム内の controller の接続数を、同じルームの output に通知する
@@ -268,6 +269,7 @@ app.prepare().then(() => {
 
     if (role === 'bridge') {
       room.bridge = socket
+      socket.emit('sink', room.sink)
       // ブリッジが繋がったらモニタへ知らせる
       socket.on('midiport', (p) => {
         room.midiport = { ...p, bridge: true }

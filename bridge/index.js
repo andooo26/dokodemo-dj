@@ -81,6 +81,16 @@ socket.on('roomerror', ({ reason }) => {
   process.exit(1)
 })
 
+// 出力先はルームに1つ。モニタがブラウザで鳴らす間はこちらへ届かない
+socket.on('sink', (which) => {
+  if (which === 'browser') {
+    panic()
+    console.log('  [!] モニタがブラウザで鳴らしています。こちらからは出力しません')
+  } else {
+    console.log('MIDI 出力はこのブリッジです')
+  }
+})
+
 socket.on('midi', (msg) => {
   if (!ArrayBuffer.isView(msg)) return
   track(msg)
