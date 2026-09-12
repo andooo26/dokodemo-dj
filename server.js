@@ -138,9 +138,10 @@ app.prepare().then(() => {
   const rooms = createRoomStore()
   const PITCH_CENTER = 8192
 
-  // ルームのブリッジ (PC側) と、同じルームのモニタへ送る
+  // 出力先のブリッジと、同じルームのモニタへ送る
   const deliver = (room, msg) => {
-    room.bridge?.emit('midi', msg)
+    // モニタがブラウザで鳴らしている間はブリッジへ送らない (二重発音を避ける)
+    if (room.sink !== 'browser') room.bridge?.emit('midi', msg)
     io.to(`${room.code}:output`).emit('midi', msg)
     logMidi(room, msg)
   }
@@ -206,8 +207,24 @@ app.prepare().then(() => {
     else if (msg.type === 'pitch_bend') console.log(`  ${tag} ~ Pitch     ch:${ch} val:${msg.value}`)
   }
 
-  // ブリッジから届いた最新のポート状態。未接続なら空で返す
-  const midiState = (room) => room.midiport ?? { name: null, virtual: false, ports: [], bridge: false }
+  // ブリッジのポート状態と、いまどちらが鳴らしているか
+  const midiState = (room) => ({
+    ...(room.midiport ?? { name: null, virtual: false, ports: [], bridge: false }),
+    sink: room.sink,
+    sinkOwner: room.sinkOwner?.id ?? null,
+  })
+
+  const notifySink = (room) => io.to(`${room.code}:output`).emit('midiport', midiState(room))
+
+  // 出力先を切り替える。切り替える前に、いま鳴っている音を今の出力先へ戻す
+  const setSink = (room, next, owner) => {
+    if (room.sink === next && room.sinkOwner === owner) return
+    releaseAll(room)
+    room.sink = next
+    room.sinkOwner = owner
+    console.log(`[~] 出力先: ${next}${owner ? ` (${owner.id})` : ''} [${room.code}]`)
+    notifySink(room)
+  }
 
   // ルーム内の controller の接続数を、同じルームの output に通知する
   const memberCount = (code, role) => io.sockets.adapter.rooms.get(`${code}:${role}`)?.size ?? 0
@@ -254,7 +271,7 @@ app.prepare().then(() => {
       // ブリッジが繋がったらモニタへ知らせる
       socket.on('midiport', (p) => {
         room.midiport = { ...p, bridge: true }
-        io.to(`${room.code}:output`).emit('midiport', room.midiport)
+        notifySink(room)
       })
     }
     else if (role === 'output') {
@@ -262,6 +279,13 @@ app.prepare().then(() => {
       socket.emit('midiport', midiState(room))
     }
     else notifyControllers(room.code)
+
+    // モニタが自分で鳴らすかどうかを申告する
+    socket.on('sink', (value) => {
+      if (role !== 'output') return
+      if (value === 'browser') setSink(room, 'browser', socket)
+      else if (room.sinkOwner === socket || room.sink === 'browser') setSink(room, 'bridge', null)
+    })
 
     // ポートの一覧取得と切り替えはブリッジ側の仕事なので、そのまま渡す
     socket.on('midiports', () => {
@@ -299,10 +323,19 @@ app.prepare().then(() => {
         room.midiport = null
         room.activeNotes.clear()   // 解放はブリッジ側が自分でやる
         room.bentChannels.clear()
-        io.to(`${room.code}:output`).emit('midiport', midiState(room))
+        notifySink(room)
         return
       }
-      if (role === 'output') return
+      if (role === 'output') {
+        // 鳴らしていたモニタが消えたらブリッジへ戻す
+        if (room.sinkOwner === socket) {
+          room.sink = 'bridge'
+          room.sinkOwner = null
+          releaseAll(room)
+          notifySink(room)
+        }
+        return
+      }
       notifyControllers(room.code)
       if (memberCount(room.code, 'controller') === 0) releaseAll(room)
     })
