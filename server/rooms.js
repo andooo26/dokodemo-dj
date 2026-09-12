@@ -24,6 +24,8 @@ function createRoomStore() {
     code,
     bridge:       null,        // MIDIを出すPC側のプロセス
     midiport:     null,        // ブリッジから届いた最新のポート状態
+    sink:         'bridge',    // 音を出す側。'bridge' か 'browser'
+    sinkOwner:    null,        // ブラウザで鳴らしているモニタのsocket
     activeNotes:  new Set(),   // 鳴りっぱなし防止用
     bentChannels: new Set(),
     emptySince:   Date.now(),

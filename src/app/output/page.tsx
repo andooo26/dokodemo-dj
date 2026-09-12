@@ -8,6 +8,8 @@ import { CuePlayButton, PlayStopButton } from '@/components/ControlButtons'
 
 import { encode, decode } from '@/core/codec'
 import type { MidiMsg } from '@/core/codec'
+import { createWebMidiSink } from '@/core/webmidi'
+import type { WebMidiSink, WebMidiState } from '@/core/webmidi'
 
 import {
   PADS, PAD_NOTES, KNOB_LABELS as EQ_LABELS, padByNote,
@@ -80,14 +82,19 @@ type MidiPortInfo = {
   name: string | null
   virtual: boolean
   ports: string[]
-  bridge?: boolean   // PC側ブリッジが繋がっているか
+  bridge?: boolean               // PC側ブリッジが繋がっているか
+  sink?: 'bridge' | 'browser'   // いま鳴らしている側
+  sinkOwner?: string | null     // ブラウザで鳴らしているモニタのsocket id
   error?: string
 }
 
-const VIRTUAL_PORT_VALUE = ''
+// プルダウンの値は "出力先:ポート名"。ブリッジの仮想ポートは名前なし
+const BRIDGE_VIRTUAL = 'bridge:'
 
 export default function OutputPage() {
   const [midiPort, setMidiPort]         = useState<MidiPortInfo | null>(null)
+  const [webMidi, setWebMidi]           = useState<WebMidiState | null>(null)
+  const [owned, setOwned]               = useState(false)   // このモニタがブラウザで鳴らす担当か
   const [room, setRoom]                 = useState<string | null>(null)
   const [qr, setQr]                     = useState<string | null>(null)
   const [joinUrl, setJoinUrl]           = useState<string>('')
@@ -113,11 +120,52 @@ export default function OutputPage() {
   // コールバックから最新値を参照する
   const pitchMsbRef = useRef<[number, number]>([PITCH_CENTER >> 7, PITCH_CENTER >> 7])
   const socketRef   = useRef<Socket | null>(null)
+  const sinkRef     = useRef<WebMidiSink | null>(null)
+  const ownedRef    = useRef(false)   // 受信ハンドラから同期的に見るための控え
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
     setLog(prev => [`[${ts}] ${msg}`, ...prev].slice(0, 40))
   }, [])
+
+  // ブラウザ側の MIDI 出口を用意する
+  useEffect(() => {
+    const sink = createWebMidiSink(s => {
+      setWebMidi(s)
+      // 鳴らしていたポートが消えたらブリッジへ戻す
+      if (ownedRef.current && !s.name) {
+        ownedRef.current = false
+        setOwned(false)
+        socketRef.current?.emit('sink', 'bridge')
+        addLog(s.error ?? 'ブラウザ出力を終了しました')
+      }
+    })
+    sinkRef.current = sink
+
+    sink.enable().then(s => {
+      if (s.error)      addLog(`Web MIDI: ${s.error}`)
+      else if (s.name)  { addLog(`ブラウザで出力: ${s.name}`); socketRef.current?.emit('sink', 'browser') }
+      else if (s.ready) addLog('ブラウザ出力が使えます')
+    })
+
+    // タブを閉じるときに鳴りっぱなしを戻す
+    const release = () => sink.panic()
+    window.addEventListener('pagehide', release)
+    return () => {
+      window.removeEventListener('pagehide', release)
+      sink.close()
+      sinkRef.current = null
+      ownedRef.current = false
+    }
+  }, [addLog])
+
+  // 許可を取り直す
+  const enableWebMidi = () => {
+    sinkRef.current?.enable().then(s => {
+      if (s.error) addLog(`Web MIDI: ${s.error}`)
+      else if (s.name) socketRef.current?.emit('sink', 'browser')
+    })
+  }
 
   // Socket.io
   useEffect(() => {
@@ -153,14 +201,37 @@ export default function OutputPage() {
       socket.disconnect()
     })
 
-    socket.on('connect',    () => { setSockStatus('connected'); setRoomError(null); addLog('サーバーに接続しました') })
-    socket.on('disconnect', () => { setSockStatus('disconnected'); setControllers(0); addLog('切断しました') })
+    socket.on('connect', () => {
+      setSockStatus('connected')
+      setRoomError(null)
+      addLog('サーバーに接続しました')
+      // 再接続でも担当を申告し直す
+      if (sinkRef.current?.state().name) socket.emit('sink', 'browser')
+    })
+    socket.on('disconnect', () => {
+      setSockStatus('disconnected')
+      setControllers(0)
+      sinkRef.current?.panic()
+      ownedRef.current = false
+      setOwned(false)
+      addLog('切断しました')
+    })
 
     socket.on('midiport', (p: MidiPortInfo) => {
       setMidiPort(p)
-      if (p.error)       addLog(`MIDI 切り替え失敗: ${p.error}`)
-      else if (!p.bridge) addLog('PC側ブリッジが未接続です')
-      else                addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
+      const mine = p.sink === 'browser' && p.sinkOwner === socket.id
+      ownedRef.current = mine
+      setOwned(mine)
+
+      // 別のモニタがブラウザで鳴らし始めたら、こちらは手を引く
+      if (p.sink === 'browser' && !mine && sinkRef.current?.state().name) {
+        try { sinkRef.current.open(null) } catch { /* 既に閉じている */ }
+      }
+
+      if (p.error)            addLog(`MIDI 切り替え失敗: ${p.error}`)
+      else if (p.sink === 'browser') addLog(mine ? 'ブラウザで出力します' : '別のモニタが出力しています')
+      else if (!p.bridge)     addLog('PC側ブリッジが未接続です')
+      else                    addLog(p.name ? `MIDI 出力: ${p.name}` : 'MIDI ポートを開けませんでした')
     })
 
     // スマホ(controller)の接続数
@@ -230,8 +301,10 @@ export default function OutputPage() {
         else if (msg.channel === 1) setEqDeck2(prev => prev.map((v, i) => i === idx ? msg.value : v))
       }
 
-      // MIDI送信はサーバ側。ここは表示のみ
+      // 担当のときはブラウザから鳴らす
       const outBytes = bytes ?? encode(msg)
+      if (ownedRef.current) sinkRef.current?.send(outBytes)
+
       const hex = Array.from(outBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')
       addLog(`→ ${msg.type.padEnd(10)} [${hex}]`)
     })
@@ -239,9 +312,32 @@ export default function OutputPage() {
     return () => { socket.disconnect(); socketRef.current = null }
   }, [])
 
-  // プルダウンで選んだポートへ切り替える
-  const changeMidiPort = (name: string) => socketRef.current?.emit('setmidiport', name)
+  // プルダウンで選んだ出力先へ切り替える
+  const changeDest = (value: string) => {
+    const sep = value.indexOf(':')
+    const kind = value.slice(0, sep)
+    const name = value.slice(sep + 1)
+    const socket = socketRef.current
+
+    if (kind === 'browser') {
+      try { sinkRef.current?.open(name) }
+      catch (e) { addLog(e instanceof Error ? e.message : 'ポートを開けません'); return }
+      socket?.emit('sink', 'browser')
+      return
+    }
+    try { sinkRef.current?.open(null) } catch { /* 開いていない */ }
+    socket?.emit('sink', 'bridge')
+    socket?.emit('setmidiport', name)
+  }
   const refreshMidiPorts = () => socketRef.current?.emit('midiports')
+
+  // いま選ばれている出力先と、実際に鳴らせているか
+  const onBrowser = midiPort?.sink === 'browser' && owned
+  const dest = onBrowser && webMidi?.name ? `browser:${webMidi.name}`
+    : midiPort?.virtual ? BRIDGE_VIRTUAL
+    : midiPort?.name ? `bridge:${midiPort.name}`
+    : BRIDGE_VIRTUAL
+  const sounding = onBrowser ? Boolean(webMidi?.name) : Boolean(midiPort?.bridge && midiPort.name)
 
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col font-sans overflow-hidden">
@@ -373,30 +469,61 @@ export default function OutputPage() {
               </div>
             </div>
             <div className="flex flex-col gap-1.5 min-w-0">
-              <span className="text-xs text-gray-400 uppercase tracking-widest">MIDIポート</span>
+              <span className="text-xs text-gray-400 uppercase tracking-widest">MIDI出力先</span>
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${
-                  midiPort?.name ? 'bg-lime-400' : midiPort ? 'bg-red-500' : 'bg-yellow-400'}`} />
+                  sounding ? 'bg-lime-400' : midiPort ? 'bg-red-500' : 'bg-yellow-400'}`} />
                 <select
                   className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg
                              px-2 py-1 text-sm text-white disabled:text-gray-500"
-                  disabled={!midiPort?.bridge}
-                  value={midiPort?.virtual ? VIRTUAL_PORT_VALUE : midiPort?.name ?? VIRTUAL_PORT_VALUE}
-                  title={midiPort?.name ?? ''}
+                  disabled={!midiPort?.bridge && !webMidi?.ready}
+                  value={dest}
+                  title={dest.slice(dest.indexOf(':') + 1)}
                   onMouseDown={refreshMidiPorts}
-                  onChange={e => changeMidiPort(e.target.value)}
+                  onChange={e => changeDest(e.target.value)}
                 >
-                  <option value={VIRTUAL_PORT_VALUE}>DokodemoDJ (仮想)</option>
-                  {midiPort?.ports.map(p => <option key={p} value={p}>{p}</option>)}
+                  <optgroup label="このブラウザ" disabled={!webMidi?.ready}>
+                    {webMidi?.ports.length
+                      ? webMidi.ports.map(p => (
+                          <option key={p.id} value={`browser:${p.name}`}>{p.name}</option>
+                        ))
+                      : <option value="browser:" disabled>出力ポートがありません</option>}
+                  </optgroup>
+                  <optgroup label="PC側ブリッジ" disabled={!midiPort?.bridge}>
+                    <option value={BRIDGE_VIRTUAL}>DokodemoDJ (仮想)</option>
+                    {midiPort?.ports.map(p => <option key={p} value={`bridge:${p}`}>{p}</option>)}
+                  </optgroup>
                 </select>
               </div>
-              {midiPort && !midiPort.bridge && (
+
+              {webMidi && !webMidi.supported && (
+                <span className="text-xs text-gray-500">
+                  このブラウザは Web MIDI に未対応です。PC側ブリッジを使ってください
+                </span>
+              )}
+              {webMidi?.supported && !webMidi.ready && (
+                <button
+                  onClick={enableWebMidi}
+                  className="self-start text-xs px-3 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700"
+                >
+                  ブラウザで鳴らす (MIDIを許可)
+                </button>
+              )}
+              {webMidi?.ready && webMidi.ports.length === 0 && (
+                <span className="text-xs text-gray-500">
+                  出力先がありません。macOS は IAC Driver、Windows は loopMIDI を有効にしてください
+                </span>
+              )}
+              {!onBrowser && midiPort && !midiPort.bridge && (
                 <span className="text-xs text-red-400">
                   PC側ブリッジが未接続です (npm run bridge)
                 </span>
               )}
-              {midiPort?.bridge && !midiPort.name && (
+              {!onBrowser && midiPort?.bridge && !midiPort.name && (
                 <span className="text-xs text-red-400">ポートを開けません</span>
+              )}
+              {midiPort?.sink === 'browser' && !owned && (
+                <span className="text-xs text-yellow-400">別のモニタが出力しています</span>
               )}
             </div>
           </div>
