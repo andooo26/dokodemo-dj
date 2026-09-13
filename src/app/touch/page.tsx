@@ -497,7 +497,9 @@ export default function Controller() {
 
   return (
     <main
-      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full max-w-md mx-auto flex flex-col gap-6"
+      className="min-h-screen bg-gray-950 text-white w-full mx-auto flex flex-col
+                 px-4 py-6 gap-6 max-w-md
+                 landscape:py-3 landscape:gap-3 landscape:max-w-4xl"
       onPointerDown={() => dj.resume()}
     >
 
@@ -538,9 +540,12 @@ export default function Controller() {
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
       />
 
+      {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}
+      <div className="flex flex-col gap-6 flex-1 min-h-0 landscape:flex-row landscape:gap-6 landscape:items-center">
+
       {/* Turntable */}
-      <div className="relative flex justify-center flex-1">
-        <div className="w-full max-w-[280px]">
+      <div className="relative flex justify-center flex-1 landscape:h-full landscape:items-center">
+        <div className="w-full max-w-[280px] landscape:max-w-[min(280px,46vh)]">
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
@@ -555,6 +560,8 @@ export default function Controller() {
           />
         </div>
       </div>
+
+      <div className="flex flex-col gap-6 landscape:flex-1 landscape:gap-3">
 
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
@@ -599,8 +606,11 @@ export default function Controller() {
           />
       </div>
 
+      </div>
+      </div>
+
       {/* Log */}
-      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px]">
+      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px] landscape:hidden">
         {log.length === 0
           ? <p className="text-gray-600">-log-</p>
           : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}
