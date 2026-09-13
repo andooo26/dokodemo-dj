@@ -7,6 +7,7 @@ export type EqBand = 'high' | 'mid' | 'low'
 export type DeckState = {
   name: string | null
   duration: number
+  bpm: number | null        // 読み込み時の推定値
   playing: boolean
   cue: number
   cues: (number | null)[]   // ホットキュー4つ。未登録は null
@@ -18,6 +19,8 @@ export const TEMPO_RANGE = 0.08     // テンポフェーダの可変幅 ±8%
 export const SCRATCH_GAIN = 2.5     // ジョグの振り切りで何倍速まで出すか
 export const HOTCUE_COUNT = 4
 export const PEAK_BUCKETS = 480     // 波形表示の解像度
+const BPM_MIN = 85                  // 倍テンポ・半テンポをこの範囲へ畳む
+const BPM_MAX = 175
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
@@ -27,7 +30,7 @@ const FILTER_MIN_HZ = 200
 const FILTER_MAX_HZ = 18000
 
 const emptyState = (): DeckState => ({
-  name: null, duration: 0, playing: false, cue: 0, loading: false,
+  name: null, duration: 0, bpm: null, playing: false, cue: 0, loading: false,
   cues: Array(HOTCUE_COUNT).fill(null),
 })
 
@@ -68,6 +71,57 @@ function computePeaks(buffer: AudioBuffer): Float32Array {
     out[b] = peak
   }
   return out
+}
+
+// 音量の立ち上がりを拾い、その周期の自己相関からBPMを当てる。
+// 四つ打ちには強いが、リズムの薄い曲では外れる
+function analyzeBpm(buffer: AudioBuffer): number | null {
+  const src   = buffer.getChannelData(0)
+  const step  = Math.max(1, Math.round(buffer.sampleRate / 11025))
+  const frame = 256
+  const frames = Math.floor(src.length / step / frame)
+  if (frames < 64) return null
+
+  const energy = new Float32Array(frames)
+  for (let f = 0; f < frames; f++) {
+    const start = f * frame * step
+    let sum = 0
+    for (let i = 0; i < frame; i++) {
+      const v = src[start + i * step]
+      sum += v * v
+    }
+    energy[f] = Math.sqrt(sum / frame)
+  }
+
+  // 立ち上がりだけ残し、平均を引いて底を揃える
+  const onset = new Float32Array(frames)
+  let mean = 0
+  for (let f = 1; f < frames; f++) {
+    const diff = energy[f] - energy[f - 1]
+    onset[f] = diff > 0 ? diff : 0
+    mean += onset[f]
+  }
+  mean /= frames
+  for (let f = 0; f < frames; f++) onset[f] = Math.max(0, onset[f] - mean)
+
+  const secPerFrame = (frame * step) / buffer.sampleRate
+  const minLag = Math.max(1, Math.floor(60 / (BPM_MAX * 2 * secPerFrame)))
+  const maxLag = Math.min(frames - 1, Math.ceil(60 / (BPM_MIN / 2 * secPerFrame)))
+
+  let bestLag = 0
+  let best = 0
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0
+    for (let f = lag; f < frames; f++) sum += onset[f] * onset[f - lag]
+    sum /= frames - lag
+    if (sum > best) { best = sum; bestLag = lag }
+  }
+  if (!bestLag || best <= 0) return null
+
+  let bpm = 60 / (bestLag * secPerFrame)
+  while (bpm < BPM_MIN) bpm *= 2
+  while (bpm > BPM_MAX) bpm /= 2
+  return Math.round(bpm * 10) / 10
 }
 
 export function createDjEngine(onChange?: (states: DeckState[]) => void) {
@@ -172,7 +226,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       d.peaks = computePeaks(buffer)
       d.cue = 0
       update(d, {
-        name: file.name, duration: buffer.duration,
+        name: file.name, duration: buffer.duration, bpm: analyzeBpm(buffer),
         playing: false, cue: 0, loading: false,
         cues: Array(HOTCUE_COUNT).fill(null),
       })
@@ -330,6 +384,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     touch, jog, setTempo, setEq, setFilter, seek, hotCue,
     position: (i: DeckIndex) => positionOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
+    rate:  (i: DeckIndex) => decks[i].tempo,
     states: () => decks.map(d => d.state),
     resume, dispose,
   }

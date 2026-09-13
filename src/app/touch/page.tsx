@@ -407,22 +407,27 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, onLoad, onSeek }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
   peaks: (deck: DeckIndex) => Float32Array | null
+  rate: (deck: DeckIndex) => number
   onLoad: (file: File) => void
   onSeek: (to: number) => void
 }) {
   const [at, setAt] = useState(0)
+  const [tempo, setTempo] = useState(1)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 同じ値なら再描画されないので、止まっていても回しておいてよい
   useEffect(() => {
-    const id = setInterval(() => setAt(position(deck as DeckIndex)), 100)
+    const id = setInterval(() => {
+      setAt(position(deck as DeckIndex))
+      setTempo(rate(deck as DeckIndex))
+    }, 100)
     return () => clearInterval(id)
-  }, [deck, position])
+  }, [deck, position, rate])
 
   return (
     <div className="bg-gray-900 rounded-2xl px-4 py-3 flex flex-col gap-2">
@@ -432,6 +437,10 @@ function TrackStrip({ deck, state, position, peaks, onLoad, onSeek }: {
         </span>
         <span className="text-sm truncate flex-1 min-w-0">
           {state.loading ? '読み込み中...' : state.name ?? '曲が未選択です'}
+        </span>
+        <span className="shrink-0 font-mono text-sm text-gray-300 tabular-nums">
+          {state.bpm ? (state.bpm * tempo).toFixed(1) : '--.-'}
+          <span className="text-xs text-gray-500 ml-1">BPM</span>
         </span>
         <button
           onClick={() => inputRef.current?.click()}
@@ -459,7 +468,14 @@ function TrackStrip({ deck, state, position, peaks, onLoad, onSeek }: {
         <span>{formatTime(at)}</span>
         {state.error
           ? <span className="text-red-400 font-sans">{state.error}</span>
-          : <span>{formatTime(state.duration)}</span>}
+          : <span>
+              {Math.abs(tempo - 1) > 0.0005 && (
+                <span className="text-gray-400 mr-2">
+                  {tempo > 1 ? '+' : ''}{((tempo - 1) * 100).toFixed(1)}%
+                </span>
+              )}
+              {formatTime(state.duration)}
+            </span>}
       </div>
     </div>
   )
@@ -517,6 +533,7 @@ export default function Controller() {
         state={dj.decks[activeDeck]}
         position={dj.position}
         peaks={dj.peaks}
+        rate={dj.rate}
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
       />
