@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { useDjEngine } from '@/hooks/useDjEngine'
+import type { DeckIndex, DeckState } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
@@ -287,6 +288,86 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
   )
 }
 
+function formatTime(sec: number) {
+  const s = Math.max(0, Math.floor(sec))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
+function TrackStrip({ deck, state, position, onLoad, onSeek }: {
+  deck: number
+  state: DeckState
+  position: (deck: DeckIndex) => number
+  onLoad: (file: File) => void
+  onSeek: (to: number) => void
+}) {
+  const [at, setAt] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const barRef   = useRef<HTMLDivElement>(null)
+
+  // 同じ値なら再描画されないので、止まっていても回しておいてよい
+  useEffect(() => {
+    const id = setInterval(() => setAt(position(deck as DeckIndex)), 100)
+    return () => clearInterval(id)
+  }, [deck, position])
+
+  const pct = state.duration ? Math.min(100, (at / state.duration) * 100) : 0
+
+  const seekFromPointer = (e: React.PointerEvent) => {
+    if (!barRef.current || !state.duration) return
+    const rect = barRef.current.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    onSeek(ratio * state.duration)
+    setAt(ratio * state.duration)
+  }
+
+  return (
+    <div className="bg-gray-900 rounded-2xl px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-500 uppercase tracking-widest shrink-0">
+          Deck {deck + 1}
+        </span>
+        <span className="text-sm truncate flex-1 min-w-0">
+          {state.loading ? '読み込み中...' : state.name ?? '曲が未選択です'}
+        </span>
+        <button
+          onClick={() => inputRef.current?.click()}
+          className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-200"
+        >
+          曲を選ぶ
+        </button>
+        <input
+          id={`track-file-${deck}`}
+          ref={inputRef}
+          type="file"
+          accept="audio/*"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0]
+            if (file) onLoad(file)
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      <div
+        ref={barRef}
+        className="relative h-2 rounded-full bg-gray-800 select-none touch-none cursor-pointer"
+        onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
+      >
+        <div className="absolute inset-y-0 left-0 rounded-full bg-gray-400" style={{ width: `${pct}%` }} />
+      </div>
+
+      <div className="flex justify-between text-xs text-gray-500 font-mono">
+        <span>{formatTime(at)}</span>
+        {state.error
+          ? <span className="text-red-400 font-sans">{state.error}</span>
+          : <span>{formatTime(state.duration)}</span>}
+      </div>
+    </div>
+  )
+}
+
 // --- Page ---
 
 export default function Controller() {
@@ -302,7 +383,10 @@ export default function Controller() {
   if (roomError) return <RoomGate reason={roomError} onSubmit={connect} />
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6">
+    <main
+      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6"
+      onPointerDown={() => dj.resume()}
+    >
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
@@ -324,6 +408,15 @@ export default function Controller() {
           サーバーに接続できませんでした。PC側でサーバーが起動しているか確認してください。
         </div>
       )}
+
+      {/* Track */}
+      <TrackStrip
+        deck={activeDeck}
+        state={dj.decks[activeDeck]}
+        position={dj.position}
+        onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
+        onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
+      />
 
       {/* Turntable */}
       <div className="relative flex justify-center flex-1">
