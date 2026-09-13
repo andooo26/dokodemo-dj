@@ -19,9 +19,8 @@ export function middleware(request: NextRequest) {
   // ルートは端末に応じた入口へ
   if (pathname === '/') return redirect(home)
 
-  // 端末に合わないページは引き戻す
+  // モニタはPC専用。コントローラはどちらでも開ける
   if (pathname === '/output' && isMobile) return redirect('/touch')
-  if (pathname === '/touch' && !isMobile) return redirect('/output')
 
   return NextResponse.next()
 }

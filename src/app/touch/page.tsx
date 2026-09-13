@@ -387,7 +387,7 @@ export default function Controller() {
 
   return (
     <main
-      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6"
+      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full max-w-md mx-auto flex flex-col gap-6"
       onPointerDown={() => dj.resume()}
     >
 

@@ -200,7 +200,7 @@ npm run dev                              # サーバとブリッジをまとめ�
 
 | 用途             | URL                        |
 | ---------------- | -------------------------- |
-| スマホ1台で試す  | `https://<PCのIP>:3000/touch` (コード不要) |
+| 1台で試す        | `https://<PCのIP>:3000/touch` (コード不要。PCでも開ける) |
 | PC版UI (モニタ)   | `https://localhost:3000/output` |
 | スマホUI         | `https://<PCのIP>:3000/touch?room=コード` |
 | ARモード         | `https://<PCのIP>:3000/ar?room=コード` |
