@@ -291,6 +291,8 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
   )
 }
 
+const CUE_COLOR = '#f59e0b'
+
 // 全体波形。再生位置と頭出し点、ホットキューを重ねる
 function Waveform({ deck, state, position, peaks, onSeek }: {
   deck: number
@@ -348,11 +350,30 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
       bars(0, played, '#9ca3af')
       bars(played, data.length, '#4b5563')
 
+      const xOf = (t: number) => (t / state.duration) * w
+
+      // ホットキューは下端にチップ。番号で見分ける
       state.cues.forEach((t, i) => {
         if (t === null) return
+        const x = xOf(t)
         g.fillStyle = PADS[i].hex
-        g.fillRect((t / state.duration) * w - 1, 0, 2, h)
+        g.fillRect(x - 1, 0, 2, h)
+        g.fillRect(x - 1, h - 11, 11, 11)
+        g.fillStyle = '#0a0a0a'
+        g.font = 'bold 8px ui-monospace, monospace'
+        g.fillText(String(i + 1), x + 2, h - 3)
       })
+
+      // CUE点は上端に旗。DJソフトと同じ見た目に寄せる
+      const cueX = xOf(state.cue)
+      g.fillStyle = CUE_COLOR
+      g.fillRect(cueX - 1, 0, 2, h)
+      g.beginPath()
+      g.moveTo(cueX - 1, 0)
+      g.lineTo(cueX + 10, 0)
+      g.lineTo(cueX - 1, 11)
+      g.closePath()
+      g.fill()
 
       g.fillStyle = '#ffffff'
       g.fillRect(ratio * w - 1, 0, 2, h)
@@ -360,7 +381,7 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
 
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [deck, state.duration, state.cues, state.name, position, peaks])
+  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks])
 
   const seekFromPointer = (e: React.PointerEvent) => {
     const canvas = canvasRef.current
