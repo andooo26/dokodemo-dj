@@ -7,7 +7,7 @@ import type { DeckIndex, DeckState, DjEngine } from '@/core/audio'
 import type { MidiMsg } from '@/core/codec'
 
 const empty = (): DeckState => ({
-  name: null, duration: 0, playing: false, cue: 0, loading: false,
+  name: null, duration: 0, bpm: null, playing: false, cue: 0, loading: false,
   cues: [null, null, null, null],
 })
 const EMPTY: DeckState[] = [empty(), empty()]
@@ -39,8 +39,9 @@ export function useDjEngine() {
 
   const resume   = useCallback(() => engineRef.current?.resume(), [])
   const peaks    = useCallback((deck: DeckIndex) => engineRef.current?.peaks(deck) ?? null, [])
+  const rate     = useCallback((deck: DeckIndex) => engineRef.current?.rate(deck) ?? 1, [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
-  return { decks, handle, load, seek, position, peaks, resume }
+  return { decks, handle, load, seek, position, peaks, rate, resume }
 }
