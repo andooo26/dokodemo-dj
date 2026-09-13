@@ -291,38 +291,138 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
   )
 }
 
+const CUE_COLOR = '#f59e0b'
+
+// 全体波形。再生位置と頭出し点、ホットキューを重ねる
+function Waveform({ deck, state, position, peaks, onSeek }: {
+  deck: number
+  state: DeckState
+  position: (deck: DeckIndex) => number
+  peaks: (deck: DeckIndex) => Float32Array | null
+  onSeek: (to: number) => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    let frame = 0
+    let lastAt = -1
+
+    const draw = () => {
+      frame = requestAnimationFrame(draw)
+      const at = position(deck as DeckIndex)
+      if (at === lastAt && frame > 2) return   // 止まっている間は描き直さない
+      lastAt = at
+
+      const dpr = window.devicePixelRatio || 1
+      const w = canvas.clientWidth
+      const h = canvas.clientHeight
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr
+        canvas.height = h * dpr
+      }
+      const g = canvas.getContext('2d')
+      if (!g) return
+      g.setTransform(dpr, 0, 0, dpr, 0, 0)
+      g.clearRect(0, 0, w, h)
+
+      const mid  = h / 2
+      const data = peaks(deck as DeckIndex)
+      if (!data || !state.duration) {
+        g.fillStyle = '#374151'
+        g.fillRect(0, mid - 0.5, w, 1)
+        return
+      }
+
+      const ratio = Math.min(1, at / state.duration)
+      const barW  = w / data.length
+      const bars  = (from: number, to: number, color: string) => {
+        g.beginPath()
+        for (let i = from; i < to; i++) {
+          const y = Math.max(1, data[i] * mid * 0.95)
+          g.rect(i * barW, mid - y, Math.max(1, barW - 0.5), y * 2)
+        }
+        g.fillStyle = color
+        g.fill()
+      }
+      const played = Math.round(ratio * data.length)
+      bars(0, played, '#9ca3af')
+      bars(played, data.length, '#4b5563')
+
+      const xOf = (t: number) => (t / state.duration) * w
+
+      // ホットキューは下端にチップ。番号で見分ける
+      state.cues.forEach((t, i) => {
+        if (t === null) return
+        const x = xOf(t)
+        g.fillStyle = PADS[i].hex
+        g.fillRect(x - 1, 0, 2, h)
+        g.fillRect(x - 1, h - 11, 11, 11)
+        g.fillStyle = '#0a0a0a'
+        g.font = 'bold 8px ui-monospace, monospace'
+        g.fillText(String(i + 1), x + 2, h - 3)
+      })
+
+      // CUE点は上端に旗。DJソフトと同じ見た目に寄せる
+      const cueX = xOf(state.cue)
+      g.fillStyle = CUE_COLOR
+      g.fillRect(cueX - 1, 0, 2, h)
+      g.beginPath()
+      g.moveTo(cueX - 1, 0)
+      g.lineTo(cueX + 10, 0)
+      g.lineTo(cueX - 1, 11)
+      g.closePath()
+      g.fill()
+
+      g.fillStyle = '#ffffff'
+      g.fillRect(ratio * w - 1, 0, 2, h)
+    }
+
+    frame = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(frame)
+  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks])
+
+  const seekFromPointer = (e: React.PointerEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas || !state.duration) return
+    const rect = canvas.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    onSeek(ratio * state.duration)
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="w-full h-16 select-none touch-none cursor-pointer"
+      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
+      onPointerMove={e => { if (e.buttons || e.pointerType === 'touch') seekFromPointer(e) }}
+    />
+  )
+}
+
 function formatTime(sec: number) {
   const s = Math.max(0, Math.floor(sec))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, onLoad, onSeek }: {
+function TrackStrip({ deck, state, position, peaks, onLoad, onSeek }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
+  peaks: (deck: DeckIndex) => Float32Array | null
   onLoad: (file: File) => void
   onSeek: (to: number) => void
 }) {
   const [at, setAt] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const barRef   = useRef<HTMLDivElement>(null)
 
   // 同じ値なら再描画されないので、止まっていても回しておいてよい
   useEffect(() => {
     const id = setInterval(() => setAt(position(deck as DeckIndex)), 100)
     return () => clearInterval(id)
   }, [deck, position])
-
-  const pct = state.duration ? Math.min(100, (at / state.duration) * 100) : 0
-
-  const seekFromPointer = (e: React.PointerEvent) => {
-    if (!barRef.current || !state.duration) return
-    const rect = barRef.current.getBoundingClientRect()
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    onSeek(ratio * state.duration)
-    setAt(ratio * state.duration)
-  }
 
   return (
     <div className="bg-gray-900 rounded-2xl px-4 py-3 flex flex-col gap-2">
@@ -353,13 +453,7 @@ function TrackStrip({ deck, state, position, onLoad, onSeek }: {
         />
       </div>
 
-      <div
-        ref={barRef}
-        className="relative h-2 rounded-full bg-gray-800 select-none touch-none cursor-pointer"
-        onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
-      >
-        <div className="absolute inset-y-0 left-0 rounded-full bg-gray-400" style={{ width: `${pct}%` }} />
-      </div>
+      <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
 
       <div className="flex justify-between text-xs text-gray-500 font-mono">
         <span>{formatTime(at)}</span>
@@ -387,7 +481,7 @@ export default function Controller() {
 
   return (
     <main
-      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6"
+      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full max-w-md mx-auto flex flex-col gap-6"
       onPointerDown={() => dj.resume()}
     >
 
@@ -422,6 +516,7 @@ export default function Controller() {
         deck={activeDeck}
         state={dj.decks[activeDeck]}
         position={dj.position}
+        peaks={dj.peaks}
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
       />

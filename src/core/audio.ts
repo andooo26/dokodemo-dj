@@ -17,6 +17,7 @@ export type DeckState = {
 export const TEMPO_RANGE = 0.08     // テンポフェーダの可変幅 ±8%
 export const SCRATCH_GAIN = 2.5     // ジョグの振り切りで何倍速まで出すか
 export const HOTCUE_COUNT = 4
+export const PEAK_BUCKETS = 480     // 波形表示の解像度
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
@@ -32,6 +33,7 @@ const emptyState = (): DeckState => ({
 
 type Deck = {
   buffer: AudioBuffer | null
+  peaks: Float32Array | null
   source: AudioBufferSourceNode | null
   high: BiquadFilterNode
   mid: BiquadFilterNode
@@ -47,6 +49,25 @@ type Deck = {
   scratch: number     // 触れている間のレート
   cue: number
   state: DeckState
+}
+
+// 波形表示用に、区間ごとの最大振幅へ畳む
+function computePeaks(buffer: AudioBuffer): Float32Array {
+  const data = buffer.getChannelData(0)
+  const out = new Float32Array(PEAK_BUCKETS)
+  const per = Math.max(1, Math.floor(data.length / PEAK_BUCKETS))
+
+  for (let b = 0; b < PEAK_BUCKETS; b++) {
+    const start = b * per
+    const end = Math.min(data.length, start + per)
+    let peak = 0
+    for (let i = start; i < end; i++) {
+      const v = Math.abs(data[i])
+      if (v > peak) peak = v
+    }
+    out[b] = peak
+  }
+  return out
 }
 
 export function createDjEngine(onChange?: (states: DeckState[]) => void) {
@@ -72,7 +93,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     high.connect(mid).connect(low).connect(hpf).connect(lpf).connect(gain).connect(master)
 
     return {
-      buffer: null, source: null,
+      buffer: null, peaks: null, source: null,
       high, mid, low, hpf, lpf, gain,
       playing: false, offset: 0, startedAt: 0,
       tempo: 1, touching: false, scratch: 0, cue: 0,
@@ -148,6 +169,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       const buffer = await ctx.decodeAudioData(await file.arrayBuffer())
       pauseAt(d, 0)
       d.buffer = buffer
+      d.peaks = computePeaks(buffer)
       d.cue = 0
       update(d, {
         name: file.name, duration: buffer.duration,
@@ -307,6 +329,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     cuePress, cueRelease,
     touch, jog, setTempo, setEq, setFilter, seek, hotCue,
     position: (i: DeckIndex) => positionOf(decks[i]),
+    peaks: (i: DeckIndex) => decks[i].peaks,
     states: () => decks.map(d => d.state),
     resume, dispose,
   }
