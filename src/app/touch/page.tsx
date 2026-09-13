@@ -376,7 +376,7 @@ export default function Controller() {
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
   const dj = useDjEngine()
-  const { status, log, connect, send, failed, room, roomError } = useMidiBridge(dj.handle)
+  const { status, log, connect, send, failed, room, roomError, standalone } = useMidiBridge(dj.handle)
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -391,7 +391,12 @@ export default function Controller() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-lg font-bold flex-shrink-0">どこでもDJ</h1>
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex gap-2 flex-shrink-0 items-center">
+          {standalone && (
+            <span className="text-xs px-2 py-1 rounded-lg bg-gray-900 border border-gray-700 text-gray-400">
+              ローカル
+            </span>
+          )}
           <LinkButton href={withRoom('/ar', room)}>AR</LinkButton>
           <ConnectButton
             disabled={!mounted || status === 'connecting'}
