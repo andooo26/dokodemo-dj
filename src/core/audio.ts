@@ -9,12 +9,15 @@ export type DeckState = {
   duration: number
   playing: boolean
   cue: number
+  cues: (number | null)[]   // ホットキュー4つ。未登録は null
   loading: boolean
   error?: string
 }
 
 export const TEMPO_RANGE = 0.08     // テンポフェーダの可変幅 ±8%
 export const SCRATCH_GAIN = 2.5     // ジョグの振り切りで何倍速まで出すか
+export const HOTCUE_COUNT = 4
+export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
 const EQ_MAX_DB = 6
@@ -24,6 +27,7 @@ const FILTER_MAX_HZ = 18000
 
 const emptyState = (): DeckState => ({
   name: null, duration: 0, playing: false, cue: 0, loading: false,
+  cues: Array(HOTCUE_COUNT).fill(null),
 })
 
 type Deck = {
@@ -77,6 +81,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   }
 
   const decks: Deck[] = [makeDeck(), makeDeck()]
+  const holds = new Map<string, ReturnType<typeof setTimeout>>()
   const notify = () => onChange?.(decks.map(d => d.state))
   const update = (d: Deck, patch: Partial<DeckState>) => { d.state = { ...d.state, ...patch }; notify() }
 
@@ -147,6 +152,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       update(d, {
         name: file.name, duration: buffer.duration,
         playing: false, cue: 0, loading: false,
+        cues: Array(HOTCUE_COUNT).fill(null),
       })
     } catch {
       update(d, { loading: false, error: 'この音声ファイルは読み込めません' })
@@ -247,6 +253,37 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     }
   }
 
+  // 押した時点で未登録なら登録、登録済みならそこから再生。
+  // 登録済みを押し続けると消す
+  function hotCue(i: DeckIndex, index: number, down: boolean) {
+    const d = decks[i]
+    const key = `${i}:${index}`
+    if (!d.buffer || index < 0 || index >= HOTCUE_COUNT) return
+
+    if (!down) {
+      const timer = holds.get(key)
+      if (timer) { clearTimeout(timer); holds.delete(key) }
+      return
+    }
+
+    const at = d.state.cues[index]
+    if (at === null) {
+      const cues = [...d.state.cues]
+      cues[index] = positionOf(d)
+      update(d, { cues })
+      return
+    }
+
+    start(d, at)
+    update(d, { playing: true })
+    holds.set(key, setTimeout(() => {
+      holds.delete(key)
+      const cues = [...d.state.cues]
+      cues[index] = null
+      update(d, { cues })
+    }, HOTCUE_HOLD_MS))
+  }
+
   function seek(i: DeckIndex, to: number) {
     const d = decks[i]
     if (!d.buffer) return
@@ -259,6 +296,8 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   const resume = () => ctx.resume()
 
   function dispose() {
+    holds.forEach(clearTimeout)
+    holds.clear()
     decks.forEach(d => { stopSource(d); d.gain.disconnect() })
     ctx.close()
   }
@@ -266,7 +305,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   return {
     load, play, pause, toggle,
     cuePress, cueRelease,
-    touch, jog, setTempo, setEq, setFilter, seek,
+    touch, jog, setTempo, setEq, setFilter, seek, hotCue,
     position: (i: DeckIndex) => positionOf(decks[i]),
     states: () => decks.map(d => d.state),
     resume, dispose,

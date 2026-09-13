@@ -6,10 +6,11 @@ import { createMidiHandler } from '@/core/djmidi'
 import type { DeckIndex, DeckState, DjEngine } from '@/core/audio'
 import type { MidiMsg } from '@/core/codec'
 
-const EMPTY: DeckState[] = [
-  { name: null, duration: 0, playing: false, cue: 0, loading: false },
-  { name: null, duration: 0, playing: false, cue: 0, loading: false },
-]
+const empty = (): DeckState => ({
+  name: null, duration: 0, playing: false, cue: 0, loading: false,
+  cues: [null, null, null, null],
+})
+const EMPTY: DeckState[] = [empty(), empty()]
 
 export function useDjEngine() {
   const [decks, setDecks] = useState<DeckState[]>(EMPTY)

@@ -234,8 +234,9 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
-function Pad({ note, label, border, activeBg, onNoteOn, onNoteOff }: {
+function Pad({ note, label, border, activeBg, armed, onNoteOn, onNoteOff }: {
   note: number; label: string; border: string; activeBg: string
+  armed: boolean
   onNoteOn: (n: number) => void
   onNoteOff: (n: number) => void
 }) {
@@ -246,7 +247,9 @@ function Pad({ note, label, border, activeBg, onNoteOn, onNoteOff }: {
     <button
       className={`rounded-2xl aspect-square font-semibold text-2xl select-none touch-none
                   transition-all duration-75 border bg-black
-                  ${pressed ? `${activeBg} scale-95 text-gray-950` : `${borderColor} text-gray-600`}`}
+                  ${pressed ? `${activeBg} scale-95 text-gray-950`
+                    : armed ? `${borderColor} ${activeBg}/25 text-gray-300`
+                    : `${borderColor} text-gray-600`}`}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setPressed(true)
@@ -443,13 +446,14 @@ export default function Controller() {
 
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
-        {PADS.map(({ note, border, activeBg }) => (
+        {PADS.map(({ note, border, activeBg }, i) => (
           <Pad
             key={note}
             note={note}
             label=""
             border={border}
             activeBg={activeBg}
+            armed={dj.decks[activeDeck].cues[i] !== null}
             onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
             onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />

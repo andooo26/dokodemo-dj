@@ -3,7 +3,7 @@
 import type { MidiMsg } from '@/core/codec'
 import type { DjEngine, DeckIndex } from '@/core/audio'
 import {
-  KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  KNOBS, PAD_NOTES, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
   PITCH_CC, PITCH_CC_LSB, PITCH_CENTER,
 } from '@/core/mapping'
 
@@ -16,16 +16,13 @@ export function createMidiHandler(engine: DjEngine) {
   return function handle(msg: MidiMsg) {
     const deck: DeckIndex = msg.channel === 1 ? 1 : 0
 
-    if (msg.type === 'note_on') {
-      if (msg.note === PLAY_NOTE)            engine.toggle(deck)
-      else if (msg.note === CUE_NOTE)        engine.cuePress(deck)
-      else if (msg.note === TURNTABLE_STOP_NOTE) engine.touch(deck, true)
-      return
-    }
-
-    if (msg.type === 'note_off') {
-      if (msg.note === CUE_NOTE)             engine.cueRelease(deck)
-      else if (msg.note === TURNTABLE_STOP_NOTE) engine.touch(deck, false)
+    if (msg.type === 'note_on' || msg.type === 'note_off') {
+      const down = msg.type === 'note_on'
+      const pad = PAD_NOTES.indexOf(msg.note)
+      if (pad >= 0)                              engine.hotCue(deck, pad, down)
+      else if (msg.note === TURNTABLE_STOP_NOTE) engine.touch(deck, down)
+      else if (msg.note === CUE_NOTE)            { if (down) engine.cuePress(deck); else engine.cueRelease(deck) }
+      else if (msg.note === PLAY_NOTE && down)   engine.toggle(deck)
       return
     }
 
@@ -47,6 +44,5 @@ export function createMidiHandler(engine: DjEngine) {
       if (knob === 2) engine.setEq(deck, 'low', msg.value)
       if (knob === 3) engine.setFilter(deck, msg.value)
     }
-    // PAD (36-39) はホットキューで使う予定。今は無視する
   }
 }
