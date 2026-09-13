@@ -9,7 +9,8 @@ export type { MidiMsg }
 export type Status = 'disconnected' | 'connecting' | 'connected'
 export type RoomError = 'missing' | 'unknown' | null
 
-export function useMidiBridge() {
+// local を渡すと、サーバに繋がっていなくてもその出口へ流す
+export function useMidiBridge(local?: (msg: MidiMsg) => void) {
   const [status, setStatus]   = useState<Status>('disconnected')
   const [log, setLog]         = useState<string[]>([])
   const [failed, setFailed]   = useState(false)
@@ -17,6 +18,9 @@ export function useMidiBridge() {
   const [roomError, setRoomError] = useState<RoomError>(null)
   const socketRef             = useRef<Socket | null>(null)
   const lastSentRef           = useRef<Map<string, number>>(new Map())
+  const localRef              = useRef<((msg: MidiMsg) => void) | undefined>(undefined)
+
+  useEffect(() => { localRef.current = local }, [local])
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
@@ -56,18 +60,24 @@ export function useMidiBridge() {
   }, [addLog])
 
   const send = useCallback((msg: MidiMsg) => {
-    if (!socketRef.current?.connected) {
-      if      (msg.type === 'note_on')    addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
-      else if (msg.type === 'note_off')   addLog(`サーバに接続してください: note_off ${msg.note}`)
-      else if (msg.type === 'cc')         addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
-      else if (msg.type === 'pitch_bend') addLog(`サーバに接続してください: pitch_bend ${msg.value}`)
-      return
-    }
     // 値が変わっていない連続値は送らない
     const key = dedupKey(msg)
     if (key !== null) {
       if (lastSentRef.current.get(key) === valueOf(msg)) return
       lastSentRef.current.set(key, valueOf(msg))
+    }
+
+    // ローカル音源は接続の有無に関わらず鳴らす
+    localRef.current?.(msg)
+
+    if (!socketRef.current?.connected) {
+      // ローカルで鳴らしているなら、繋がっていないことは問題ではない
+      if (localRef.current) return
+      if      (msg.type === 'note_on')    addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
+      else if (msg.type === 'note_off')   addLog(`サーバに接続してください: note_off ${msg.note}`)
+      else if (msg.type === 'cc')         addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
+      else if (msg.type === 'pitch_bend') addLog(`サーバに接続してください: pitch_bend ${msg.value}`)
+      return
     }
 
     socketRef.current.emit('midi', encode(msg))

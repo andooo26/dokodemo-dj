@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
+import { useDjEngine } from '@/hooks/useDjEngine'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
@@ -293,7 +294,8 @@ export default function Controller() {
   const [activeDeck, setActiveDeck] = useState(0)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
-  const { status, log, connect, send, failed, room, roomError } = useMidiBridge()
+  const dj = useDjEngine()
+  const { status, log, connect, send, failed, room, roomError } = useMidiBridge(dj.handle)
 
   useEffect(() => { setMounted(true) }, [])
 
