@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
+import { useDjEngine } from '@/hooks/useDjEngine'
+import type { DeckIndex, DeckState } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
@@ -232,8 +234,9 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
-function Pad({ note, label, border, activeBg, onNoteOn, onNoteOff }: {
+function Pad({ note, label, border, activeBg, armed, onNoteOn, onNoteOff }: {
   note: number; label: string; border: string; activeBg: string
+  armed: boolean
   onNoteOn: (n: number) => void
   onNoteOff: (n: number) => void
 }) {
@@ -244,7 +247,9 @@ function Pad({ note, label, border, activeBg, onNoteOn, onNoteOff }: {
     <button
       className={`rounded-2xl aspect-square font-semibold text-2xl select-none touch-none
                   transition-all duration-75 border bg-black
-                  ${pressed ? `${activeBg} scale-95 text-gray-950` : `${borderColor} text-gray-600`}`}
+                  ${pressed ? `${activeBg} scale-95 text-gray-950`
+                    : armed ? `${borderColor} ${activeBg}/25 text-gray-300`
+                    : `${borderColor} text-gray-600`}`}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         setPressed(true)
@@ -286,6 +291,213 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
   )
 }
 
+const CUE_COLOR = '#f59e0b'
+
+// 全体波形。再生位置と頭出し点、ホットキューを重ねる
+function Waveform({ deck, state, position, peaks, onSeek }: {
+  deck: number
+  state: DeckState
+  position: (deck: DeckIndex) => number
+  peaks: (deck: DeckIndex) => Float32Array | null
+  onSeek: (to: number) => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    let frame = 0
+    let lastAt = -1
+
+    const draw = () => {
+      frame = requestAnimationFrame(draw)
+      const at = position(deck as DeckIndex)
+      if (at === lastAt && frame > 2) return   // 止まっている間は描き直さない
+      lastAt = at
+
+      const dpr = window.devicePixelRatio || 1
+      const w = canvas.clientWidth
+      const h = canvas.clientHeight
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr
+        canvas.height = h * dpr
+      }
+      const g = canvas.getContext('2d')
+      if (!g) return
+      g.setTransform(dpr, 0, 0, dpr, 0, 0)
+      g.clearRect(0, 0, w, h)
+
+      const mid  = h / 2
+      const data = peaks(deck as DeckIndex)
+      if (!data || !state.duration) {
+        g.fillStyle = '#374151'
+        g.fillRect(0, mid - 0.5, w, 1)
+        return
+      }
+
+      const ratio = Math.min(1, at / state.duration)
+      const barW  = w / data.length
+      const bars  = (from: number, to: number, color: string) => {
+        g.beginPath()
+        for (let i = from; i < to; i++) {
+          const y = Math.max(1, data[i] * mid * 0.95)
+          g.rect(i * barW, mid - y, Math.max(1, barW - 0.5), y * 2)
+        }
+        g.fillStyle = color
+        g.fill()
+      }
+      const played = Math.round(ratio * data.length)
+      bars(0, played, '#9ca3af')
+      bars(played, data.length, '#4b5563')
+
+      const xOf = (t: number) => (t / state.duration) * w
+
+      // ホットキューは下端にチップ。番号で見分ける
+      state.cues.forEach((t, i) => {
+        if (t === null) return
+        const x = xOf(t)
+        g.fillStyle = PADS[i].hex
+        g.fillRect(x - 1, 0, 2, h)
+        g.fillRect(x - 1, h - 11, 11, 11)
+        g.fillStyle = '#0a0a0a'
+        g.font = 'bold 8px ui-monospace, monospace'
+        g.fillText(String(i + 1), x + 2, h - 3)
+      })
+
+      // CUE点は上端に旗。DJソフトと同じ見た目に寄せる
+      const cueX = xOf(state.cue)
+      g.fillStyle = CUE_COLOR
+      g.fillRect(cueX - 1, 0, 2, h)
+      g.beginPath()
+      g.moveTo(cueX - 1, 0)
+      g.lineTo(cueX + 10, 0)
+      g.lineTo(cueX - 1, 11)
+      g.closePath()
+      g.fill()
+
+      g.fillStyle = '#ffffff'
+      g.fillRect(ratio * w - 1, 0, 2, h)
+    }
+
+    frame = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(frame)
+  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks])
+
+  const seekFromPointer = (e: React.PointerEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas || !state.duration) return
+    const rect = canvas.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    onSeek(ratio * state.duration)
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="w-full h-16 select-none touch-none cursor-pointer"
+      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
+      onPointerMove={e => { if (e.buttons || e.pointerType === 'touch') seekFromPointer(e) }}
+    />
+  )
+}
+
+function formatTime(sec: number) {
+  const s = Math.max(0, Math.floor(sec))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm }: {
+  deck: number
+  state: DeckState
+  position: (deck: DeckIndex) => number
+  peaks: (deck: DeckIndex) => Float32Array | null
+  rate: (deck: DeckIndex) => number
+  onLoad: (file: File) => void
+  onSeek: (to: number) => void
+  onBpm: (bpm: number) => void
+}) {
+  const [at, setAt] = useState(0)
+  const [tempo, setTempo] = useState(1)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // 同じ値なら再描画されないので、止まっていても回しておいてよい
+  useEffect(() => {
+    const id = setInterval(() => {
+      setAt(position(deck as DeckIndex))
+      setTempo(rate(deck as DeckIndex))
+    }, 100)
+    return () => clearInterval(id)
+  }, [deck, position, rate])
+
+  return (
+    <div className="bg-gray-900 rounded-2xl px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-500 uppercase tracking-widest shrink-0">
+          Deck {deck + 1}
+        </span>
+        <span className="text-sm truncate flex-1 min-w-0">
+          {state.loading ? '読み込み中...' : state.name ?? '曲が未選択です'}
+        </span>
+        <span className="shrink-0 font-mono text-sm text-gray-300 tabular-nums">
+          {state.bpm ? (state.bpm * tempo).toFixed(1) : '--.-'}
+          <span className="text-xs text-gray-500 ml-1">BPM</span>
+        </span>
+        <button
+          onClick={() => inputRef.current?.click()}
+          className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-200"
+        >
+          曲を選ぶ
+        </button>
+        <input
+          id={`track-file-${deck}`}
+          ref={inputRef}
+          type="file"
+          accept="audio/*"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0]
+            if (file) onLoad(file)
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
+
+      <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
+        <span>{formatTime(at)}</span>
+
+        {/* 倍や半分で拾ったときに直す */}
+        {state.bpm !== null && (
+          <span className="flex gap-1">
+            {([['×2', 2], ['÷2', 0.5]] as const).map(([label, ratio]) => (
+              <button
+                key={label}
+                onClick={() => onBpm((state.bpm ?? 0) * ratio)}
+                className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400"
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
+
+        {state.error
+          ? <span className="text-red-400 font-sans">{state.error}</span>
+          : <span>
+              {Math.abs(tempo - 1) > 0.0005 && (
+                <span className="text-gray-400 mr-2">
+                  {tempo > 1 ? '+' : ''}{((tempo - 1) * 100).toFixed(1)}%
+                </span>
+              )}
+              {formatTime(state.duration)}
+            </span>}
+      </div>
+    </div>
+  )
+}
+
 // --- Page ---
 
 export default function Controller() {
@@ -293,19 +505,30 @@ export default function Controller() {
   const [activeDeck, setActiveDeck] = useState(0)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
-  const { status, log, connect, send, failed, room, roomError } = useMidiBridge()
+  const dj = useDjEngine()
+  const { status, log, connect, send, failed, room, roomError, standalone } = useMidiBridge(dj.handle)
 
   useEffect(() => { setMounted(true) }, [])
 
   if (roomError) return <RoomGate reason={roomError} onSubmit={connect} />
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full flex flex-col gap-6">
+    <main
+      className="min-h-screen bg-gray-950 text-white w-full mx-auto flex flex-col
+                 px-4 py-6 gap-6 max-w-md
+                 landscape:py-3 landscape:gap-3 landscape:max-w-4xl"
+      onPointerDown={() => dj.resume()}
+    >
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-lg font-bold flex-shrink-0">どこでもDJ</h1>
-        <div className="flex gap-2 flex-shrink-0">
+        <div className="flex gap-2 flex-shrink-0 items-center">
+          {standalone && (
+            <span className="text-xs px-2 py-1 rounded-lg bg-gray-900 border border-gray-700 text-gray-400">
+              ローカル
+            </span>
+          )}
           <LinkButton href={withRoom('/ar', room)}>AR</LinkButton>
           <ConnectButton
             disabled={!mounted || status === 'connecting'}
@@ -323,9 +546,24 @@ export default function Controller() {
         </div>
       )}
 
+      {/* Track */}
+      <TrackStrip
+        deck={activeDeck}
+        state={dj.decks[activeDeck]}
+        position={dj.position}
+        peaks={dj.peaks}
+        rate={dj.rate}
+        onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
+        onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
+        onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
+      />
+
+      {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}
+      <div className="flex flex-col gap-6 flex-1 min-h-0 landscape:flex-row landscape:gap-6 landscape:items-center">
+
       {/* Turntable */}
-      <div className="relative flex justify-center flex-1">
-        <div className="w-full max-w-[280px]">
+      <div className="relative flex justify-center flex-1 landscape:h-full landscape:items-center">
+        <div className="w-full max-w-[280px] landscape:max-w-[min(280px,46vh)]">
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
@@ -341,15 +579,18 @@ export default function Controller() {
         </div>
       </div>
 
+      <div className="flex flex-col gap-6 landscape:flex-1 landscape:gap-3">
+
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
-        {PADS.map(({ note, border, activeBg }) => (
+        {PADS.map(({ note, border, activeBg }, i) => (
           <Pad
             key={note}
             note={note}
             label=""
             border={border}
             activeBg={activeBg}
+            armed={dj.decks[activeDeck].cues[i] !== null}
             onNoteOn={(n) => send({ type: 'note_on',  channel: activeDeck, note: n, velocity: 127 })}
             onNoteOff={(n) => send({ type: 'note_off', channel: activeDeck, note: n })}
           />
@@ -383,8 +624,11 @@ export default function Controller() {
           />
       </div>
 
+      </div>
+      </div>
+
       {/* Log */}
-      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px]">
+      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px] landscape:hidden">
         {log.length === 0
           ? <p className="text-gray-600">-log-</p>
           : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}

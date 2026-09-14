@@ -9,14 +9,19 @@ export type { MidiMsg }
 export type Status = 'disconnected' | 'connecting' | 'connected'
 export type RoomError = 'missing' | 'unknown' | null
 
-export function useMidiBridge() {
+// local を渡すと、サーバに繋がっていなくてもその出口へ流す
+export function useMidiBridge(local?: (msg: MidiMsg) => void) {
   const [status, setStatus]   = useState<Status>('disconnected')
   const [log, setLog]         = useState<string[]>([])
   const [failed, setFailed]   = useState(false)
   const [room, setRoom]       = useState<string | null>(null)
   const [roomError, setRoomError] = useState<RoomError>(null)
+  const [standalone, setStandalone] = useState(false)   // コード無しで、この端末だけで鳴らす
   const socketRef             = useRef<Socket | null>(null)
   const lastSentRef           = useRef<Map<string, number>>(new Map())
+  const localRef              = useRef<((msg: MidiMsg) => void) | undefined>(undefined)
+
+  useEffect(() => { localRef.current = local }, [local])
 
   const addLog = useCallback((msg: string) => {
     const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
@@ -32,7 +37,14 @@ export function useMidiBridge() {
     setRoomError(null)
     lastSentRef.current.clear()
 
-    if (!target) { setStatus('disconnected'); setRoomError('missing'); return }
+    // コードが無くてもローカル音源があれば1台で完結できる
+    if (!target) {
+      setStatus('disconnected')
+      if (localRef.current) { setStandalone(true); addLog('この端末だけで鳴らします') }
+      else setRoomError('missing')
+      return
+    }
+    setStandalone(false)
 
     const s = io({ query: { role: 'controller', room: target }, transports: ['websocket'], timeout: 3000 })
     s.on('connect',       () => { setStatus('connected');    setFailed(false); addLog('接続しました') })
@@ -56,13 +68,6 @@ export function useMidiBridge() {
   }, [addLog])
 
   const send = useCallback((msg: MidiMsg) => {
-    if (!socketRef.current?.connected) {
-      if      (msg.type === 'note_on')    addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
-      else if (msg.type === 'note_off')   addLog(`サーバに接続してください: note_off ${msg.note}`)
-      else if (msg.type === 'cc')         addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
-      else if (msg.type === 'pitch_bend') addLog(`サーバに接続してください: pitch_bend ${msg.value}`)
-      return
-    }
     // 値が変わっていない連続値は送らない
     const key = dedupKey(msg)
     if (key !== null) {
@@ -70,7 +75,20 @@ export function useMidiBridge() {
       lastSentRef.current.set(key, valueOf(msg))
     }
 
-    socketRef.current.emit('midi', encode(msg))
+    // ローカル音源は接続の有無に関わらず鳴らす
+    localRef.current?.(msg)
+
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('midi', encode(msg))
+    } else if (!localRef.current) {
+      // 送り先がどこにも無いときだけ、繋ぐよう促す
+      if      (msg.type === 'note_on')    addLog(`サーバに接続してください: note_on ${msg.note} ${msg.velocity}`)
+      else if (msg.type === 'note_off')   addLog(`サーバに接続してください: note_off ${msg.note}`)
+      else if (msg.type === 'cc')         addLog(`サーバに接続してください: cc ${msg.controller} ${msg.value}`)
+      else if (msg.type === 'pitch_bend') addLog(`サーバに接続してください: pitch_bend ${msg.value}`)
+      return
+    }
+
     if      (msg.type === 'note_on')    addLog(`Note On  ${msg.note}`)
     else if (msg.type === 'note_off')   addLog(`Note Off ${msg.note}`)
     else if (msg.type === 'cc')         addLog(`CC ${msg.controller}  ${msg.value}`)
@@ -82,5 +100,5 @@ export function useMidiBridge() {
 
   useEffect(() => () => { socketRef.current?.disconnect() }, [])
 
-  return { status, log, connect, send, failed, room, roomError }
+  return { status, log, connect, send, failed, room, roomError, standalone }
 }
