@@ -234,6 +234,58 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
+// BPMに合わせてジョグを前後に振る。信号はタンテを手で回したときと同じ
+function ScratchButton({ channel, bpm, send }: {
+  channel: number
+  bpm: number
+  send: (msg: MidiMsg) => void
+}) {
+  const [pressed, setPressed] = useState(false)
+  const frameRef = useRef(0)
+
+  const stop = () => {
+    if (!frameRef.current) return
+    cancelAnimationFrame(frameRef.current)
+    frameRef.current = 0
+    setPressed(false)
+    send({ type: 'pitch_bend', channel, value: PITCH_CENTER })
+    send({ type: 'note_off', channel, note: TURNTABLE_STOP_NOTE })
+  }
+
+  useEffect(() => () => { if (frameRef.current) cancelAnimationFrame(frameRef.current) }, [])
+
+  const start = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setPressed(true)
+    send({ type: 'note_on', channel, note: TURNTABLE_STOP_NOTE, velocity: 127 })
+
+    const beat = 60000 / (bpm || 120)
+    const began = performance.now()
+    const loop = () => {
+      // 1拍で1往復。位相は経過時間から出すので、駒落ちしてもずれない
+      const phase = ((performance.now() - began) % beat) / beat
+      const swing = Math.sin(phase * 2 * Math.PI) * SCRATCH_DEPTH
+      send({ type: 'pitch_bend', channel, value: Math.round(PITCH_CENTER + swing * 4096) })
+      frameRef.current = requestAnimationFrame(loop)
+    }
+    loop()
+  }
+
+  return (
+    <button
+      className={`w-12 h-12 rounded-full text-[10px] font-semibold select-none touch-none border border-gray-700
+                  transition-all duration-75
+                  ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+      onPointerDown={start}
+      onPointerUp={stop}
+      onPointerCancel={stop}
+      onPointerLeave={stop}
+    >
+      擦る
+    </button>
+  )
+}
+
 function Pad({ note, label, border, activeBg, armed, onNoteOn, onNoteOff }: {
   note: number; label: string; border: string; activeBg: string
   armed: boolean
@@ -292,6 +344,7 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
 }
 
 const CUE_COLOR = '#f59e0b'
+const SCRATCH_DEPTH = 0.8   // 自動スクラッチの振り幅
 
 // 全体波形。再生位置と頭出し点、ホットキューを重ねる
 function Waveform({ deck, state, position, peaks, onSeek }: {
@@ -569,6 +622,11 @@ export default function Controller() {
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
           <CuePlayButton channel={activeDeck} send={send} />
           <PlayStopButton channel={activeDeck} send={send} />
+          <ScratchButton
+            channel={activeDeck}
+            bpm={(dj.decks[activeDeck].bpm ?? 0) * dj.rate(activeDeck as DeckIndex)}
+            send={send}
+          />
         </div>
         <div className="absolute right-0 inset-y-0 py-2">
           <PitchFader

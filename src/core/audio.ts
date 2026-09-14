@@ -35,9 +35,9 @@ const emptyState = (): DeckState => ({
 })
 
 type Deck = {
-  buffer: AudioBuffer | null
+  node: AudioWorkletNode | null
   peaks: Float32Array | null
-  source: AudioBufferSourceNode | null
+  loaded: boolean
   high: BiquadFilterNode
   mid: BiquadFilterNode
   low: BiquadFilterNode
@@ -45,8 +45,8 @@ type Deck = {
   lpf: BiquadFilterNode
   gain: GainNode
   playing: boolean
-  offset: number      // 最後に再生を始めた位置
-  startedAt: number   // その時刻
+  reportedPos: number   // ワークレットから届いた位置
+  reportedAt: number    // それを受け取った時刻
   tempo: number       // テンポフェーダ由来の基準レート
   touching: boolean   // タンテに触れているか
   scratch: number     // 触れている間のレート
@@ -96,9 +96,9 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     high.connect(mid).connect(low).connect(hpf).connect(lpf).connect(gain).connect(master)
 
     return {
-      buffer: null, peaks: null, source: null,
+      node: null, peaks: null, loaded: false,
       high, mid, low, hpf, lpf, gain,
-      playing: false, offset: 0, startedAt: 0,
+      playing: false, reportedPos: 0, reportedAt: 0,
       tempo: 1, touching: false, scratch: 0, cue: 0,
       state: emptyState(),
     }
@@ -109,58 +109,59 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   const notify = () => onChange?.(decks.map(d => d.state))
   const update = (d: Deck, patch: Partial<DeckState>) => { d.state = { ...d.state, ...patch }; notify() }
 
+  // 読み出しはワークレットに任せる。速度を負にできるので逆回転と擦りができる
+  const ready = ctx.audioWorklet.addModule('/deck-processor.js').then(() => {
+    for (const d of decks) {
+      const node = new AudioWorkletNode(ctx, 'deck', {
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
+      })
+      node.port.onmessage = ({ data }: MessageEvent<{ position: number; ended: boolean }>) => {
+        d.reportedPos = data.position / ctx.sampleRate
+        d.reportedAt = ctx.currentTime
+        if (data.ended && d.playing) { d.playing = false; update(d, { playing: false }) }
+      }
+      node.connect(d.high)
+      d.node = node
+    }
+  }).catch(() => {
+    for (const d of decks) update(d, { error: 'この環境では再生できません' })
+  })
+
+  const send = (d: Deck, msg: Record<string, unknown>) => d.node?.port.postMessage(msg)
+
   // 実際に鳴らすレート。タンテに触れている間はジョグが決める
   const rateOf = (d: Deck) => (d.touching ? d.scratch : d.tempo)
 
   const positionOf = (d: Deck) => {
-    if (!d.playing) return d.offset
-    const p = d.offset + (ctx.currentTime - d.startedAt) * rateOf(d)
-    return Math.max(0, Math.min(d.state.duration, p))
+    const moved = d.playing ? (ctx.currentTime - d.reportedAt) * rateOf(d) : 0
+    return Math.max(0, Math.min(d.state.duration, d.reportedPos + moved))
   }
 
-  // 鳴らし直す。Web Audio のソースは一度止めると再利用できない
+  const markAt = (d: Deck, at: number) => {
+    d.reportedPos = Math.max(0, Math.min(d.state.duration, at))
+    d.reportedAt = ctx.currentTime
+  }
+
   function start(d: Deck, from: number) {
-    if (!d.buffer) return
-    stopSource(d)
-    const src = ctx.createBufferSource()
-    src.buffer = d.buffer
-    src.playbackRate.value = Math.max(0, rateOf(d))
-    src.connect(d.high)
-    src.onended = () => {
-      // 自然に終わった場合だけ止める。差し替えのときは onended を外してある
-      if (d.source !== src) return
-      d.playing = false
-      d.offset = d.state.duration
-      update(d, { playing: false })
-    }
-    src.start(0, Math.max(0, Math.min(d.state.duration, from)))
-    d.source = src
-    d.offset = from
-    d.startedAt = ctx.currentTime
+    if (!d.loaded) return
+    markAt(d, from)
+    send(d, { type: 'seek', position: d.reportedPos * ctx.sampleRate })
+    send(d, { type: 'rate', value: rateOf(d) })
+    send(d, { type: 'play' })
     d.playing = true
   }
 
-  function stopSource(d: Deck) {
-    if (!d.source) return
-    d.source.onended = null
-    try { d.source.stop() } catch { /* まだ鳴っていない */ }
-    d.source.disconnect()
-    d.source = null
-  }
-
   function pauseAt(d: Deck, at: number) {
-    stopSource(d)
+    markAt(d, at)
+    send(d, { type: 'pause' })
+    send(d, { type: 'seek', position: d.reportedPos * ctx.sampleRate })
     d.playing = false
-    d.offset = at
   }
 
   // レートを変える。位置の計算がずれないよう、変える前に現在位置へ畳む
   function applyRate(d: Deck) {
-    const next = Math.max(0, rateOf(d))
-    if (!d.playing || !d.source) return
-    d.offset = positionOf(d)
-    d.startedAt = ctx.currentTime
-    d.source.playbackRate.setTargetAtTime(next, ctx.currentTime, RAMP)
+    if (d.playing) markAt(d, positionOf(d))
+    send(d, { type: 'rate', value: rateOf(d) })
   }
 
   // --- 外向きの操作 ---
@@ -169,9 +170,9 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     const d = decks[i]
     update(d, { loading: true, error: undefined })
     try {
+      await ready
       const buffer = await ctx.decodeAudioData(await file.arrayBuffer())
       pauseAt(d, 0)
-      d.buffer = buffer
       d.peaks = computePeaks(buffer)
       d.cue = 0
       update(d, {
@@ -179,6 +180,16 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
         playing: false, cue: 0, loading: false,
         cues: Array(HOTCUE_COUNT).fill(null),
       })
+
+      // 波形とBPMを取り終えたら、生データはワークレットへ渡して手放す
+      const channels: Float32Array[] = []
+      for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) {
+        channels.push(buffer.getChannelData(c).slice())
+      }
+      send(d, { type: 'load', channels, length: buffer.length })
+      d.loaded = true
+      d.playing = false
+      markAt(d, 0)
     } catch {
       update(d, { loading: false, error: 'この音声ファイルは読み込めません' })
     }
@@ -186,8 +197,8 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   function play(i: DeckIndex) {
     const d = decks[i]
-    if (!d.buffer || d.playing) return
-    start(d, d.offset >= d.state.duration ? 0 : d.offset)
+    if (!d.loaded || d.playing) return
+    start(d, d.reportedPos >= d.state.duration - 0.01 ? 0 : d.reportedPos)
     update(d, { playing: true })
   }
 
@@ -206,7 +217,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   // 止まっていれば頭出し点から試聴、鳴っていればそこを頭出し点にして戻る
   function cuePress(i: DeckIndex) {
     const d = decks[i]
-    if (!d.buffer) return
+    if (!d.loaded) return
     if (d.playing) {
       d.cue = positionOf(d)
       pauseAt(d, d.cue)
@@ -219,7 +230,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   function cueRelease(i: DeckIndex) {
     const d = decks[i]
-    if (!d.buffer || !d.playing) return
+    if (!d.loaded || !d.playing) return
     pauseAt(d, d.cue)
     update(d, { playing: false })
   }
@@ -228,18 +239,20 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   function touch(i: DeckIndex, down: boolean) {
     const d = decks[i]
     if (d.touching === down) return
-    if (d.playing) d.offset = positionOf(d)
+    if (d.playing) markAt(d, positionOf(d))
     d.touching = down
     d.scratch = 0
-    d.startedAt = ctx.currentTime
     applyRate(d)
+
+    // 止まっているデッキでも、触れている間は擦った音が出る
+    if (!d.playing && d.loaded) send(d, { type: down ? 'play' : 'pause' })
   }
 
-  // amount は -1..1。逆回転は出せないので、戻す向きは無音になる
+  // amount は -1..1。負なら逆に回る
   function jog(i: DeckIndex, amount: number) {
     const d = decks[i]
     if (!d.touching) return
-    d.scratch = Math.max(0, amount) * SCRATCH_GAIN
+    d.scratch = amount * SCRATCH_GAIN
     applyRate(d)
   }
 
@@ -283,7 +296,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   function hotCue(i: DeckIndex, index: number, down: boolean) {
     const d = decks[i]
     const key = `${i}:${index}`
-    if (!d.buffer || index < 0 || index >= HOTCUE_COUNT) return
+    if (!d.loaded || index < 0 || index >= HOTCUE_COUNT) return
 
     if (!down) {
       const timer = holds.get(key)
@@ -319,7 +332,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   function seek(i: DeckIndex, to: number) {
     const d = decks[i]
-    if (!d.buffer) return
+    if (!d.loaded) return
     if (d.playing) start(d, to)
     else pauseAt(d, to)
     notify()
@@ -331,7 +344,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   function dispose() {
     holds.forEach(clearTimeout)
     holds.clear()
-    decks.forEach(d => { stopSource(d); d.gain.disconnect() })
+    decks.forEach(d => { send(d, { type: 'pause' }); d.node?.disconnect(); d.gain.disconnect() })
     ctx.close()
   }
 
