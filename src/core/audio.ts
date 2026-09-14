@@ -21,6 +21,9 @@ export const HOTCUE_COUNT = 4
 export const PEAK_BUCKETS = 480     // 波形表示の解像度
 const BPM_MIN = 85                  // 倍テンポ・半テンポをこの範囲へ畳む
 const BPM_MAX = 175
+const HARMONICS = 4                 // 倍音をどこまで見るか
+const PRIOR_CENTER = 128            // 倍と半分が同点のとき、この辺りを選ぶ
+const PRIOR_WIDTH = 0.55            // オクターブ単位の広がり
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
@@ -79,12 +82,13 @@ function analyzeBpm(buffer: AudioBuffer): number | null {
   const src   = buffer.getChannelData(0)
   const step  = Math.max(1, Math.round(buffer.sampleRate / 11025))
   const frame = 256
-  const frames = Math.floor(src.length / step / frame)
-  if (frames < 64) return null
+  const hop   = 64      // 重ねて刻む。1コマ約6ミリ秒
+  const frames = Math.floor((src.length / step - frame) / hop)
+  if (frames < 128) return null
 
   const energy = new Float32Array(frames)
   for (let f = 0; f < frames; f++) {
-    const start = f * frame * step
+    const start = f * hop * step
     let sum = 0
     for (let i = 0; i < frame; i++) {
       const v = src[start + i * step]
@@ -104,23 +108,65 @@ function analyzeBpm(buffer: AudioBuffer): number | null {
   mean /= frames
   for (let f = 0; f < frames; f++) onset[f] = Math.max(0, onset[f] - mean)
 
-  const secPerFrame = (frame * step) / buffer.sampleRate
-  const minLag = Math.max(1, Math.floor(60 / (BPM_MAX * 2 * secPerFrame)))
-  const maxLag = Math.min(frames - 1, Math.ceil(60 / (BPM_MIN / 2 * secPerFrame)))
-
-  let bestLag = 0
-  let best = 0
-  for (let lag = minLag; lag <= maxLag; lag++) {
+  // lag は実数で受ける。コマの間は線形に読む
+  const corr = (lag: number) => {
+    const base = Math.floor(lag)
+    const frac = lag - base
     let sum = 0
-    for (let f = lag; f < frames; f++) sum += onset[f] * onset[f - lag]
-    sum /= frames - lag
-    if (sum > best) { best = sum; bestLag = lag }
+    let n = 0
+    for (let f = base + 1; f < frames; f++) {
+      const back = onset[f - base] * (1 - frac) + onset[f - base - 1] * frac
+      sum += onset[f] * back
+      n++
+    }
+    return n ? sum / n : 0
   }
-  if (!bestLag || best <= 0) return null
 
-  let bpm = 60 / (bestLag * secPerFrame)
-  while (bpm < BPM_MIN) bpm *= 2
-  while (bpm > BPM_MAX) bpm /= 2
+  const secPerFrame = (hop * step) / buffer.sampleRate
+  const lagOf = (bpm: number) => 60 / (bpm * secPerFrame)
+
+  // 整数lagの自己相関を先に作る。倍音の確認で何度も引くため
+  const maxLag = Math.min(frames - 2, Math.ceil(lagOf(BPM_MIN) * HARMONICS))
+  const ac = new Float32Array(maxLag + 1)
+  for (let lag = 2; lag <= maxLag; lag++) ac[lag] = corr(lag)
+
+  const acAt = (lag: number) => {
+    if (lag < 2 || lag >= maxLag) return 0
+    const base = Math.floor(lag)
+    const frac = lag - base
+    return ac[base] * (1 - frac) + ac[base + 1] * frac
+  }
+
+  // 本当の拍なら、その2倍3倍の位置にも山が立つ。
+  // 1.5倍や半分で拾った候補はここで落ちる
+  const comb = (bpm: number, at: (lag: number) => number) => {
+    const lag = lagOf(bpm)
+    let sum = 0
+    for (let h = 1; h <= HARMONICS; h++) sum += at(h * lag) / h
+    return sum
+  }
+
+  // 倍でも半分でも倍音の裏付けは同じだけ出る。人の感じ方に寄せて解く
+  const prior = (bpm: number) =>
+    Math.exp(-0.5 * Math.pow(Math.log2(bpm / PRIOR_CENTER) / PRIOR_WIDTH, 2))
+
+  let bpm = 0
+  let best = 0
+  for (let cand = BPM_MIN; cand <= BPM_MAX; cand += 0.25) {
+    const v = comb(cand, acAt) * prior(cand)
+    if (v > best) { best = v; bpm = cand }
+  }
+  if (!bpm || best <= 0) return null
+
+  // 周辺を実信号で細かく走査する
+  let fine = comb(bpm, corr) * prior(bpm)
+  for (let d = -0.5; d <= 0.5; d += 0.01) {
+    const cand = bpm + d
+    if (cand < BPM_MIN || cand > BPM_MAX) continue
+    const v = comb(cand, corr) * prior(cand)
+    if (v > fine) { fine = v; bpm = cand }
+  }
+
   return Math.round(bpm * 10) / 10
 }
 
