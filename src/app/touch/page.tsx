@@ -407,7 +407,7 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
@@ -415,6 +415,7 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
   rate: (deck: DeckIndex) => number
   onLoad: (file: File) => void
   onSeek: (to: number) => void
+  onBpm: (bpm: number) => void
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
@@ -464,8 +465,24 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
 
       <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
 
-      <div className="flex justify-between text-xs text-gray-500 font-mono">
+      <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
         <span>{formatTime(at)}</span>
+
+        {/* 倍や半分で拾ったときに直す */}
+        {state.bpm !== null && (
+          <span className="flex gap-1">
+            {([['×2', 2], ['÷2', 0.5]] as const).map(([label, ratio]) => (
+              <button
+                key={label}
+                onClick={() => onBpm((state.bpm ?? 0) * ratio)}
+                className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400"
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
+
         {state.error
           ? <span className="text-red-400 font-sans">{state.error}</span>
           : <span>
@@ -538,6 +555,7 @@ export default function Controller() {
         rate={dj.rate}
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
+        onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
       />
 
       {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}

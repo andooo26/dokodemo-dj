@@ -1,6 +1,8 @@
 // ブラウザだけで鳴らす簡易DJエンジン。2デッキ分の再生とEQを持つ。
 // 受け口はMIDIではなくDJの用語。MIDIとの結線は呼び出し側でやる。
 
+import { analyzeBpm } from '@/core/bpm'
+
 export type DeckIndex = 0 | 1
 export type EqBand = 'high' | 'mid' | 'low'
 
@@ -19,11 +21,6 @@ export const TEMPO_RANGE = 0.08     // テンポフェーダの可変幅 ±8%
 export const SCRATCH_GAIN = 2.5     // ジョグの振り切りで何倍速まで出すか
 export const HOTCUE_COUNT = 4
 export const PEAK_BUCKETS = 480     // 波形表示の解像度
-const BPM_MIN = 85                  // 倍テンポ・半テンポをこの範囲へ畳む
-const BPM_MAX = 175
-const HARMONICS = 4                 // 倍音をどこまで見るか
-const PRIOR_CENTER = 128            // 倍と半分が同点のとき、この辺りを選ぶ
-const PRIOR_WIDTH = 0.55            // オクターブ単位の広がり
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
@@ -74,100 +71,6 @@ function computePeaks(buffer: AudioBuffer): Float32Array {
     out[b] = peak
   }
   return out
-}
-
-// 音量の立ち上がりを拾い、その周期の自己相関からBPMを当てる。
-// 四つ打ちには強いが、リズムの薄い曲では外れる
-function analyzeBpm(buffer: AudioBuffer): number | null {
-  const src   = buffer.getChannelData(0)
-  const step  = Math.max(1, Math.round(buffer.sampleRate / 11025))
-  const frame = 256
-  const hop   = 64      // 重ねて刻む。1コマ約6ミリ秒
-  const frames = Math.floor((src.length / step - frame) / hop)
-  if (frames < 128) return null
-
-  const energy = new Float32Array(frames)
-  for (let f = 0; f < frames; f++) {
-    const start = f * hop * step
-    let sum = 0
-    for (let i = 0; i < frame; i++) {
-      const v = src[start + i * step]
-      sum += v * v
-    }
-    energy[f] = Math.sqrt(sum / frame)
-  }
-
-  // 立ち上がりだけ残し、平均を引いて底を揃える
-  const onset = new Float32Array(frames)
-  let mean = 0
-  for (let f = 1; f < frames; f++) {
-    const diff = energy[f] - energy[f - 1]
-    onset[f] = diff > 0 ? diff : 0
-    mean += onset[f]
-  }
-  mean /= frames
-  for (let f = 0; f < frames; f++) onset[f] = Math.max(0, onset[f] - mean)
-
-  // lag は実数で受ける。コマの間は線形に読む
-  const corr = (lag: number) => {
-    const base = Math.floor(lag)
-    const frac = lag - base
-    let sum = 0
-    let n = 0
-    for (let f = base + 1; f < frames; f++) {
-      const back = onset[f - base] * (1 - frac) + onset[f - base - 1] * frac
-      sum += onset[f] * back
-      n++
-    }
-    return n ? sum / n : 0
-  }
-
-  const secPerFrame = (hop * step) / buffer.sampleRate
-  const lagOf = (bpm: number) => 60 / (bpm * secPerFrame)
-
-  // 整数lagの自己相関を先に作る。倍音の確認で何度も引くため
-  const maxLag = Math.min(frames - 2, Math.ceil(lagOf(BPM_MIN) * HARMONICS))
-  const ac = new Float32Array(maxLag + 1)
-  for (let lag = 2; lag <= maxLag; lag++) ac[lag] = corr(lag)
-
-  const acAt = (lag: number) => {
-    if (lag < 2 || lag >= maxLag) return 0
-    const base = Math.floor(lag)
-    const frac = lag - base
-    return ac[base] * (1 - frac) + ac[base + 1] * frac
-  }
-
-  // 本当の拍なら、その2倍3倍の位置にも山が立つ。
-  // 1.5倍や半分で拾った候補はここで落ちる
-  const comb = (bpm: number, at: (lag: number) => number) => {
-    const lag = lagOf(bpm)
-    let sum = 0
-    for (let h = 1; h <= HARMONICS; h++) sum += at(h * lag) / h
-    return sum
-  }
-
-  // 倍でも半分でも倍音の裏付けは同じだけ出る。人の感じ方に寄せて解く
-  const prior = (bpm: number) =>
-    Math.exp(-0.5 * Math.pow(Math.log2(bpm / PRIOR_CENTER) / PRIOR_WIDTH, 2))
-
-  let bpm = 0
-  let best = 0
-  for (let cand = BPM_MIN; cand <= BPM_MAX; cand += 0.25) {
-    const v = comb(cand, acAt) * prior(cand)
-    if (v > best) { best = v; bpm = cand }
-  }
-  if (!bpm || best <= 0) return null
-
-  // 周辺を実信号で細かく走査する
-  let fine = comb(bpm, corr) * prior(bpm)
-  for (let d = -0.5; d <= 0.5; d += 0.01) {
-    const cand = bpm + d
-    if (cand < BPM_MIN || cand > BPM_MAX) continue
-    const v = comb(cand, corr) * prior(cand)
-    if (v > fine) { fine = v; bpm = cand }
-  }
-
-  return Math.round(bpm * 10) / 10
 }
 
 export function createDjEngine(onChange?: (states: DeckState[]) => void) {
@@ -272,7 +175,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       d.peaks = computePeaks(buffer)
       d.cue = 0
       update(d, {
-        name: file.name, duration: buffer.duration, bpm: analyzeBpm(buffer),
+        name: file.name, duration: buffer.duration, bpm: await analyzeBpm(buffer),
         playing: false, cue: 0, loading: false,
         cues: Array(HOTCUE_COUNT).fill(null),
       })
@@ -406,6 +309,14 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     }, HOTCUE_HOLD_MS))
   }
 
+  // 倍や半分で拾ったときに手で直す
+  function setBpm(i: DeckIndex, bpm: number) {
+    const d = decks[i]
+    if (!d.state.bpm) return
+    const v = Math.min(400, Math.max(20, bpm))
+    update(d, { bpm: Math.round(v * 10) / 10 })
+  }
+
   function seek(i: DeckIndex, to: number) {
     const d = decks[i]
     if (!d.buffer) return
@@ -427,7 +338,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   return {
     load, play, pause, toggle,
     cuePress, cueRelease,
-    touch, jog, setTempo, setEq, setFilter, seek, hotCue,
+    touch, jog, setTempo, setEq, setFilter, seek, hotCue, setBpm,
     position: (i: DeckIndex) => positionOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,
