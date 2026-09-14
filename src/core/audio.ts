@@ -243,6 +243,9 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     d.touching = down
     d.scratch = 0
     applyRate(d)
+
+    // 止まっているデッキでも、触れている間は擦った音が出る
+    if (!d.playing && d.loaded) send(d, { type: down ? 'play' : 'pause' })
   }
 
   // amount は -1..1。負なら逆に回る
