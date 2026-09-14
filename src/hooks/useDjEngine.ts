@@ -40,8 +40,9 @@ export function useDjEngine() {
   const resume   = useCallback(() => engineRef.current?.resume(), [])
   const peaks    = useCallback((deck: DeckIndex) => engineRef.current?.peaks(deck) ?? null, [])
   const rate     = useCallback((deck: DeckIndex) => engineRef.current?.rate(deck) ?? 1, [])
+  const setBpm   = useCallback((deck: DeckIndex, bpm: number) => engineRef.current?.setBpm(deck, bpm), [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
-  return { decks, handle, load, seek, position, peaks, rate, resume }
+  return { decks, handle, load, seek, position, peaks, rate, setBpm, resume }
 }

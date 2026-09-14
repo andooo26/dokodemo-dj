@@ -407,7 +407,7 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
@@ -415,6 +415,7 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
   rate: (deck: DeckIndex) => number
   onLoad: (file: File) => void
   onSeek: (to: number) => void
+  onBpm: (bpm: number) => void
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
@@ -464,8 +465,24 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek }: {
 
       <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
 
-      <div className="flex justify-between text-xs text-gray-500 font-mono">
+      <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
         <span>{formatTime(at)}</span>
+
+        {/* 倍や半分で拾ったときに直す */}
+        {state.bpm !== null && (
+          <span className="flex gap-1">
+            {([['×2', 2], ['÷2', 0.5]] as const).map(([label, ratio]) => (
+              <button
+                key={label}
+                onClick={() => onBpm((state.bpm ?? 0) * ratio)}
+                className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400"
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
+
         {state.error
           ? <span className="text-red-400 font-sans">{state.error}</span>
           : <span>
@@ -497,7 +514,9 @@ export default function Controller() {
 
   return (
     <main
-      className="min-h-screen bg-gray-950 text-white px-4 py-6 w-full max-w-md mx-auto flex flex-col gap-6"
+      className="min-h-screen bg-gray-950 text-white w-full mx-auto flex flex-col
+                 px-4 py-6 gap-6 max-w-md
+                 landscape:py-3 landscape:gap-3 landscape:max-w-4xl"
       onPointerDown={() => dj.resume()}
     >
 
@@ -536,11 +555,15 @@ export default function Controller() {
         rate={dj.rate}
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
+        onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
       />
 
+      {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}
+      <div className="flex flex-col gap-6 flex-1 min-h-0 landscape:flex-row landscape:gap-6 landscape:items-center">
+
       {/* Turntable */}
-      <div className="relative flex justify-center flex-1">
-        <div className="w-full max-w-[280px]">
+      <div className="relative flex justify-center flex-1 landscape:h-full landscape:items-center">
+        <div className="w-full max-w-[280px] landscape:max-w-[min(280px,46vh)]">
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
@@ -555,6 +578,8 @@ export default function Controller() {
           />
         </div>
       </div>
+
+      <div className="flex flex-col gap-6 landscape:flex-1 landscape:gap-3">
 
       {/* Pads */}
       <div className="grid grid-cols-4 gap-3">
@@ -599,8 +624,11 @@ export default function Controller() {
           />
       </div>
 
+      </div>
+      </div>
+
       {/* Log */}
-      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px]">
+      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px] landscape:hidden">
         {log.length === 0
           ? <p className="text-gray-600">-log-</p>
           : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}
