@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { useDjEngine } from '@/hooks/useDjEngine'
 import type { DeckIndex, DeckState } from '@/core/audio'
+import { PEAKS_PER_SEC } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
@@ -344,17 +345,21 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
 }
 
 const CUE_COLOR = '#f59e0b'
+const ZOOM_LEVELS = [16, 8, 4]   // 拡大表示で一度に映す秒数。押すたびに寄る
 const SCRATCH_DEPTH = 0.8   // 自動スクラッチの振り幅
 
-// 全体波形。再生位置と頭出し点、ホットキューを重ねる
-function Waveform({ deck, state, position, peaks, onSeek }: {
+// 波形。zoom を渡すと、その秒数ぶんだけを再生位置を中心に映す
+function Waveform({ deck, state, position, peaks, zoom, onSeek, onNudge }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
   peaks: (deck: DeckIndex) => Float32Array | null
+  zoom?: number
   onSeek: (to: number) => void
+  onNudge?: (delta: number) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const dragRef = useRef<number | null>(null)   // 拡大時に指を滑らせた前回のX
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -388,27 +393,39 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
         return
       }
 
-      const ratio = Math.min(1, at / state.duration)
-      const barW  = w / data.length
-      const bars  = (from: number, to: number, color: string) => {
+      // 映す時間の範囲。拡大時は再生位置が真ん中に来る
+      const from = zoom ? at - zoom / 2 : 0
+      const span = zoom ?? state.duration
+      const xOf  = (t: number) => ((t - from) / span) * w
+      const perPx = span / w
+
+      // 1ピクセルが受け持つ範囲の山を拾う。拡大しても間引かれない
+      const bars = (x0: number, x1: number, color: string) => {
         g.beginPath()
-        for (let i = from; i < to; i++) {
-          const y = Math.max(1, data[i] * mid * 0.95)
-          g.rect(i * barW, mid - y, Math.max(1, barW - 0.5), y * 2)
+        for (let x = Math.max(0, Math.floor(x0)); x < Math.min(w, Math.ceil(x1)); x++) {
+          const t = from + x * perPx
+          if (t < 0 || t >= state.duration) continue
+          const i0 = Math.floor(t * PEAKS_PER_SEC)
+          const i1 = Math.max(i0 + 1, Math.floor((t + perPx) * PEAKS_PER_SEC))
+          let peak = 0
+          for (let i = i0; i < i1 && i < data.length; i++) {
+            if (data[i] > peak) peak = data[i]
+          }
+          const y = Math.max(1, peak * mid * 0.95)
+          g.rect(x, mid - y, 1, y * 2)
         }
         g.fillStyle = color
         g.fill()
       }
-      const played = Math.round(ratio * data.length)
-      bars(0, played, '#9ca3af')
-      bars(played, data.length, '#4b5563')
-
-      const xOf = (t: number) => (t / state.duration) * w
+      const head = xOf(at)
+      bars(0, head, '#9ca3af')
+      bars(head, w, '#4b5563')
 
       // ホットキューは下端にチップ。番号で見分ける
       state.cues.forEach((t, i) => {
         if (t === null) return
         const x = xOf(t)
+        if (x < 0 || x > w) return
         g.fillStyle = PADS[i].hex
         g.fillRect(x - 1, 0, 2, h)
         g.fillRect(x - 1, h - 11, 11, 11)
@@ -419,22 +436,46 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
 
       // CUE点は上端に旗。DJソフトと同じ見た目に寄せる
       const cueX = xOf(state.cue)
-      g.fillStyle = CUE_COLOR
-      g.fillRect(cueX - 1, 0, 2, h)
-      g.beginPath()
-      g.moveTo(cueX - 1, 0)
-      g.lineTo(cueX + 10, 0)
-      g.lineTo(cueX - 1, 11)
-      g.closePath()
-      g.fill()
+      if (cueX >= 0 && cueX <= w) {
+        g.fillStyle = CUE_COLOR
+        g.fillRect(cueX - 1, 0, 2, h)
+        g.beginPath()
+        g.moveTo(cueX - 1, 0)
+        g.lineTo(cueX + 10, 0)
+        g.lineTo(cueX - 1, 11)
+        g.closePath()
+        g.fill()
+      }
 
       g.fillStyle = '#ffffff'
-      g.fillRect(ratio * w - 1, 0, 2, h)
+      g.fillRect(head - 1, 0, 2, h)
     }
 
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks])
+  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks, zoom])
+
+  // 全体表示は触った所へ飛ぶ。拡大表示は再生位置が中心で動かないので、
+  // 飛ばすのではなく指の動いたぶんだけ曲を送る
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    if (zoom) dragRef.current = e.clientX
+    else seekFromPointer(e)
+  }
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!state.duration) return
+    if (zoom) {
+      if (dragRef.current === null) return
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const delta = (e.clientX - dragRef.current) / canvas.clientWidth * zoom
+      dragRef.current = e.clientX
+      onNudge?.(-delta)
+      return
+    }
+    if (e.buttons || e.pointerType === 'touch') seekFromPointer(e)
+  }
 
   const seekFromPointer = (e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -447,9 +488,11 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-16 select-none touch-none cursor-pointer"
-      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
-      onPointerMove={e => { if (e.buttons || e.pointerType === 'touch') seekFromPointer(e) }}
+      className={`w-full select-none touch-none ${zoom ? 'h-20 cursor-grab' : 'h-16 cursor-pointer'}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => { dragRef.current = null }}
+      onPointerCancel={() => { dragRef.current = null }}
     />
   )
 }
@@ -473,6 +516,7 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
+  const [zoom, setZoom] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 同じ値なら再描画されないので、止まっていても回しておいてよい
@@ -508,6 +552,20 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
         >
           KEY
         </button>
+        {/* 押すたびに寄り、一番寄ったら全体表示へ戻る */}
+        <button
+          onClick={() => setZoom(prev => {
+            const next = prev === null ? 0 : ZOOM_LEVELS.indexOf(prev) + 1
+            return next >= ZOOM_LEVELS.length ? null : ZOOM_LEVELS[next]
+          })}
+          className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border tabular-nums ${
+            zoom !== null
+              ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400'
+          }`}
+        >
+          {zoom === null ? '拡大' : `${zoom}s`}
+        </button>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-200"
@@ -528,6 +586,13 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
         />
       </div>
 
+      {zoom !== null && (
+        <Waveform
+          deck={deck} state={state} position={position} peaks={peaks}
+          zoom={zoom} onSeek={onSeek}
+          onNudge={(delta) => onSeek(position(deck as DeckIndex) + delta)}
+        />
+      )}
       <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
 
       <div className="flex items-center justify-between text-xs text-gray-500 font-mono">

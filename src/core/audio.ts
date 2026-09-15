@@ -21,7 +21,7 @@ export type DeckState = {
 export const TEMPO_RANGE = 0.08     // テンポフェーダの可変幅 ±8%
 export const SCRATCH_GAIN = 2.5     // ジョグの振り切りで何倍速まで出すか
 export const HOTCUE_COUNT = 4
-export const PEAK_BUCKETS = 480     // 波形表示の解像度
+export const PEAKS_PER_SEC = 100    // 波形表示の解像度。拡大に耐えるよう秒あたりで持つ
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 
 const EQ_MIN_DB = -26               // 絞り切りは実質キル
@@ -56,13 +56,14 @@ type Deck = {
   state: DeckState
 }
 
-// 波形表示用に、区間ごとの最大振幅へ畳む
+// 波形表示用に、一定時間ごとの最大振幅へ畳む。
+// 全体を何分割ではなく秒あたり固定なので、拡大しても粒が揃う
 function computePeaks(buffer: AudioBuffer): Float32Array {
   const data = buffer.getChannelData(0)
-  const out = new Float32Array(PEAK_BUCKETS)
-  const per = Math.max(1, Math.floor(data.length / PEAK_BUCKETS))
+  const per = Math.max(1, Math.round(buffer.sampleRate / PEAKS_PER_SEC))
+  const out = new Float32Array(Math.ceil(data.length / per))
 
-  for (let b = 0; b < PEAK_BUCKETS; b++) {
+  for (let b = 0; b < out.length; b++) {
     const start = b * per
     const end = Math.min(data.length, start + per)
     let peak = 0
