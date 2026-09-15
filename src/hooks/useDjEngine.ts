@@ -7,7 +7,8 @@ import type { DeckIndex, DeckState, DjEngine } from '@/core/audio'
 import type { MidiMsg } from '@/core/codec'
 
 const empty = (): DeckState => ({
-  name: null, duration: 0, bpm: null, playing: false, cue: 0, keylock: false, loading: false,
+  name: null, duration: 0, bpm: null, beat: null, bar: 0, playing: false, cue: 0,
+  keylock: false, synced: false, master: false, loading: false,
   cues: [null, null, null, null],
 })
 const EMPTY: DeckState[] = [empty(), empty()]
@@ -42,8 +43,10 @@ export function useDjEngine() {
   const rate     = useCallback((deck: DeckIndex) => engineRef.current?.rate(deck) ?? 1, [])
   const setBpm   = useCallback((deck: DeckIndex, bpm: number) => engineRef.current?.setBpm(deck, bpm), [])
   const setKeylock = useCallback((deck: DeckIndex, on: boolean) => engineRef.current?.setKeylock(deck, on), [])
+  const sync     = useCallback((deck: DeckIndex) => engineRef.current?.sync(deck), [])
+  const setMaster = useCallback((deck: DeckIndex) => engineRef.current?.setMaster(deck), [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
-  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, resume }
+  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, resume }
 }

@@ -4,13 +4,13 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { useDjEngine } from '@/hooks/useDjEngine'
 import type { DeckIndex, DeckState } from '@/core/audio'
-import { PEAKS_PER_SEC } from '@/core/audio'
+import { PEAKS_PER_SEC, BEATS_PER_BAR } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import {
-  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE,
   PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT, pitchToCC,
 } from '@/core/mapping'
 
@@ -235,6 +235,44 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
+// マスターに拍を合わせる。長押しで自分をマスターにする
+function SyncButton({ channel, state, send }: {
+  channel: number
+  state: DeckState
+  send: (msg: MidiMsg) => void
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const heldRef  = useRef(false)
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  const note = (n: number) => send({ type: 'note_on', channel, note: n, velocity: 127 })
+
+  return (
+    <button
+      className={`w-12 h-12 rounded-full text-xs font-semibold select-none touch-none border
+                  transition-all duration-75
+                  ${state.master
+                    ? 'bg-amber-500 border-amber-400 text-gray-950'
+                    : state.synced
+                      ? 'bg-sky-500 border-sky-400 text-gray-950'
+                      : 'bg-gray-800 border-gray-700 text-gray-200'}`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        heldRef.current = false
+        timerRef.current = setTimeout(() => { heldRef.current = true; note(MASTER_NOTE) }, 500)
+      }}
+      onPointerUp={() => {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        if (!heldRef.current) note(SYNC_NOTE)
+      }}
+      onPointerCancel={() => { if (timerRef.current) clearTimeout(timerRef.current) }}
+    >
+      {state.master ? 'MST' : 'SYNC'}
+    </button>
+  )
+}
+
 // BPMに合わせてジョグを前後に振る。信号はタンテを手で回したときと同じ
 function ScratchButton({ channel, bpm, send }: {
   channel: number
@@ -417,6 +455,19 @@ function Waveform({ deck, state, position, peaks, zoom, onSeek, onNudge }: {
         g.fillStyle = color
         g.fill()
       }
+      // 拍の線。拡大時だけ引く。全体表示では潰れて読めない
+      if (zoom && state.bpm && state.beat !== null) {
+        const len = 60 / state.bpm
+        for (let n = Math.ceil((from - state.beat) / len); ; n++) {
+          const t = state.beat + n * len
+          if (t > from + span) break
+          if (t < 0 || t > state.duration) continue
+          const downbeat = Math.abs(Math.round((t - state.bar) / len)) % BEATS_PER_BAR === 0
+          g.fillStyle = downbeat ? '#64748b' : '#334155'
+          g.fillRect(xOf(t), downbeat ? 0 : h * 0.25, 1, downbeat ? h : h * 0.5)
+        }
+      }
+
       const head = xOf(at)
       bars(0, head, '#9ca3af')
       bars(head, w, '#4b5563')
@@ -453,7 +504,7 @@ function Waveform({ deck, state, position, peaks, zoom, onSeek, onNudge }: {
 
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks, zoom])
+  }, [deck, state.duration, state.cue, state.cues, state.name, state.bpm, state.beat, state.bar, position, peaks, zoom])
 
   // 全体表示は触った所へ飛ぶ。拡大表示は再生位置が中心で動かないので、
   // 飛ばすのではなく指の動いたぶんだけ曲を送る
@@ -700,6 +751,7 @@ export default function Controller() {
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
           <CuePlayButton channel={activeDeck} send={send} />
           <PlayStopButton channel={activeDeck} send={send} />
+          <SyncButton channel={activeDeck} state={dj.decks[activeDeck]} send={send} />
           <ScratchButton
             channel={activeDeck}
             bpm={(dj.decks[activeDeck].bpm ?? 0) * dj.rate(activeDeck as DeckIndex)}
