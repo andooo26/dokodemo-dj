@@ -3,7 +3,7 @@
 import type { MidiMsg } from '@/core/codec'
 import type { DjEngine, DeckIndex } from '@/core/audio'
 import {
-  KNOBS, PAD_NOTES, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  KNOBS, PAD_NOTES, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE,
   PITCH_CC, PITCH_CC_LSB, PITCH_CENTER,
 } from '@/core/mapping'
 
@@ -23,6 +23,8 @@ export function createMidiHandler(engine: DjEngine) {
       else if (msg.note === TURNTABLE_STOP_NOTE) engine.touch(deck, down)
       else if (msg.note === CUE_NOTE)            { if (down) engine.cuePress(deck); else engine.cueRelease(deck) }
       else if (msg.note === PLAY_NOTE && down)   engine.toggle(deck)
+      else if (msg.note === SYNC_NOTE && down)   engine.sync(deck)
+      else if (msg.note === MASTER_NOTE && down) engine.setMaster(deck)
       return
     }
 
