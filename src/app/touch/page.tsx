@@ -460,7 +460,7 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm, onKeylock }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
@@ -469,6 +469,7 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm 
   onLoad: (file: File) => void
   onSeek: (to: number) => void
   onBpm: (bpm: number) => void
+  onKeylock: (on: boolean) => void
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
@@ -496,6 +497,17 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm 
           {state.bpm ? (state.bpm * tempo).toFixed(1) : '--.-'}
           <span className="text-xs text-gray-500 ml-1">BPM</span>
         </span>
+        {/* テンポを変えてもピッチを保つ */}
+        <button
+          onClick={() => onKeylock(!state.keylock)}
+          className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border ${
+            state.keylock
+              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400'
+          }`}
+        >
+          KEY
+        </button>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-200"
@@ -609,6 +621,7 @@ export default function Controller() {
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
         onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
+        onKeylock={(on) => dj.setKeylock(activeDeck as DeckIndex, on)}
       />
 
       {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}

@@ -13,6 +13,7 @@ export type DeckState = {
   playing: boolean
   cue: number
   cues: (number | null)[]   // ホットキュー4つ。未登録は null
+  keylock: boolean          // テンポを変えてもピッチを保つ
   loading: boolean
   error?: string
 }
@@ -30,7 +31,7 @@ const FILTER_MIN_HZ = 200
 const FILTER_MAX_HZ = 18000
 
 const emptyState = (): DeckState => ({
-  name: null, duration: 0, bpm: null, playing: false, cue: 0, loading: false,
+  name: null, duration: 0, bpm: null, playing: false, cue: 0, keylock: false, loading: false,
   cues: Array(HOTCUE_COUNT).fill(null),
 })
 
@@ -48,6 +49,7 @@ type Deck = {
   reportedPos: number   // ワークレットから届いた位置
   reportedAt: number    // それを受け取った時刻
   tempo: number       // テンポフェーダ由来の基準レート
+  keylock: boolean    // ワークレットに渡してある値
   touching: boolean   // タンテに触れているか
   scratch: number     // 触れている間のレート
   cue: number
@@ -99,7 +101,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       node: null, peaks: null, loaded: false,
       high, mid, low, hpf, lpf, gain,
       playing: false, reportedPos: 0, reportedAt: 0,
-      tempo: 1, touching: false, scratch: 0, cue: 0,
+      tempo: 1, keylock: false, touching: false, scratch: 0, cue: 0,
       state: emptyState(),
     }
   }
@@ -180,6 +182,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
         playing: false, cue: 0, loading: false,
         cues: Array(HOTCUE_COUNT).fill(null),
       })
+      send(d, { type: 'keylock', value: d.keylock })
 
       // 波形とBPMを取り終えたら、生データはワークレットへ渡して手放す
       const channels: Float32Array[] = []
@@ -262,6 +265,15 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     const ratio = (Math.max(0, Math.min(16383, value)) - 8192) / 8192
     d.tempo = 1 + ratio * TEMPO_RANGE
     applyRate(d)
+  }
+
+  // テンポを変えてもピッチを保つ。擦っている間はワークレット側で素通しになる
+  function setKeylock(i: DeckIndex, on: boolean) {
+    const d = decks[i]
+    if (d.keylock === on) return
+    d.keylock = on
+    send(d, { type: 'keylock', value: on })
+    update(d, { keylock: on })
   }
 
   // value は 0..127。64 が素通し
@@ -351,7 +363,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   return {
     load, play, pause, toggle,
     cuePress, cueRelease,
-    touch, jog, setTempo, setEq, setFilter, seek, hotCue, setBpm,
+    touch, jog, setTempo, setKeylock, setEq, setFilter, seek, hotCue, setBpm,
     position: (i: DeckIndex) => positionOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,
