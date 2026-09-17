@@ -4,7 +4,7 @@ import type { MidiMsg } from '@/core/codec'
 import type { DjEngine, DeckIndex } from '@/core/audio'
 import {
   KNOBS, PAD_NOTES, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE,
-  PITCH_CC, PITCH_CC_LSB, PITCH_CENTER,
+  PITCH_CC, PITCH_CC_LSB, PITCH_CENTER, SCRATCH_GATE_CC,
 } from '@/core/mapping'
 
 const JOG_SCALE = 4096   // touch画面が90度の回転で振る幅
@@ -38,6 +38,10 @@ export function createMidiHandler(engine: DjEngine) {
         if (msg.controller === PITCH_CC) msb[deck] = msg.value
         const lsb = msg.controller === PITCH_CC_LSB ? msg.value : 0
         engine.setTempo(deck, (msb[deck] << 7) | lsb)
+        return
+      }
+      if (msg.controller === SCRATCH_GATE_CC) {
+        engine.setScratchGate(deck, msg.value)
         return
       }
       const knob = KNOBS.findIndex(k => k.cc === msg.controller)

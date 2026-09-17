@@ -46,7 +46,8 @@ export function useDjEngine() {
   const sync     = useCallback((deck: DeckIndex) => engineRef.current?.sync(deck), [])
   const setMaster = useCallback((deck: DeckIndex) => engineRef.current?.setMaster(deck), [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
+  const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
-  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, resume }
+  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, beatPhase, resume }
 }
