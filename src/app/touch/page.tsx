@@ -10,7 +10,7 @@ import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import {
-  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE,
+  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE, SCRATCH_GATE_CC,
   PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT, pitchToCC,
 } from '@/core/mapping'
 
@@ -273,14 +273,50 @@ function SyncButton({ channel, state, send }: {
   )
 }
 
-// BPMに合わせてジョグを前後に振る。信号はタンテを手で回したときと同じ
-function ScratchButton({ channel, bpm, send }: {
+// 擦りのかたち。phase は1拍の中の位置で 0〜1。
+//   swing : ジョグの速さ。正で前、負で戻る
+//   gate  : 擦り音の音量 0〜127
+const SCRATCH_PATTERNS = [
+  {
+    id: 'ベビー',
+    // 1拍で前後に1往復。いちばん基本の動き
+    shape: (phase: number) => ({
+      swing: Math.sin(phase * 2 * Math.PI) * SCRATCH_DEPTH,
+      gate: 127,
+    }),
+  },
+  {
+    id: 'チャープ',
+    // 行きはゆっくり、戻りは急。鳥の鳴き声のように聞こえる
+    shape: (phase: number) => ({
+      swing: phase < 0.6
+        ? SCRATCH_DEPTH * 0.7
+        : -SCRATCH_DEPTH * 1.05,
+      gate: 127,
+    }),
+  },
+  {
+    id: 'トランス',
+    // 送りは一定のまま、音量を8分で刻む
+    shape: (phase: number) => ({
+      swing: SCRATCH_DEPTH * 0.5,
+      gate: Math.floor(phase * 4) % 2 === 0 ? 127 : 0,
+    }),
+  },
+] as const
+
+// 拍に合わせてジョグを振る。信号はタンテを手で回したときと同じ。
+// 位相はエンジンのビートグリッドから取るので、いつ押しても拍頭から始まる
+function ScratchButton({ channel, bpm, beatPhase, send }: {
   channel: number
   bpm: number
+  beatPhase: () => number | null
   send: (msg: MidiMsg) => void
 }) {
   const [pressed, setPressed] = useState(false)
+  const [pattern, setPattern] = useState(0)
   const frameRef = useRef(0)
+  const gateRef  = useRef(127)
 
   const stop = () => {
     if (!frameRef.current) return
@@ -288,6 +324,7 @@ function ScratchButton({ channel, bpm, send }: {
     frameRef.current = 0
     setPressed(false)
     send({ type: 'pitch_bend', channel, value: PITCH_CENTER })
+    send({ type: 'cc', channel, controller: SCRATCH_GATE_CC, value: 127 })
     send({ type: 'note_off', channel, note: TURNTABLE_STOP_NOTE })
   }
 
@@ -296,32 +333,48 @@ function ScratchButton({ channel, bpm, send }: {
   const start = (e: React.PointerEvent) => {
     e.currentTarget.setPointerCapture(e.pointerId)
     setPressed(true)
+    gateRef.current = 127
     send({ type: 'note_on', channel, note: TURNTABLE_STOP_NOTE, velocity: 127 })
 
     const beat = 60000 / (bpm || 120)
     const began = performance.now()
+    const shape = SCRATCH_PATTERNS[pattern].shape
+
     const loop = () => {
-      // 1拍で1往復。位相は経過時間から出すので、駒落ちしてもずれない
-      const phase = ((performance.now() - began) % beat) / beat
-      const swing = Math.sin(phase * 2 * Math.PI) * SCRATCH_DEPTH
+      // グリッドがあればそこから。無い曲は押した時点を拍頭とみなす
+      const phase = beatPhase() ?? ((performance.now() - began) % beat) / beat
+      const { swing, gate } = shape(phase)
+
       send({ type: 'pitch_bend', channel, value: Math.round(PITCH_CENTER + swing * 4096) })
+      if (gate !== gateRef.current) {
+        gateRef.current = gate
+        send({ type: 'cc', channel, controller: SCRATCH_GATE_CC, value: gate })
+      }
       frameRef.current = requestAnimationFrame(loop)
     }
     loop()
   }
 
   return (
-    <button
-      className={`w-12 h-12 rounded-full text-[10px] font-semibold select-none touch-none border border-gray-700
-                  transition-all duration-75
-                  ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
-      onPointerDown={start}
-      onPointerUp={stop}
-      onPointerCancel={stop}
-      onPointerLeave={stop}
-    >
-      擦る
-    </button>
+    <div className="flex flex-col gap-1 items-center">
+      <button
+        onClick={() => setPattern(p => (p + 1) % SCRATCH_PATTERNS.length)}
+        className="text-[9px] leading-none px-1.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-400"
+      >
+        {SCRATCH_PATTERNS[pattern].id}
+      </button>
+      <button
+        className={`w-12 h-12 rounded-full text-[10px] font-semibold select-none touch-none border border-gray-700
+                    transition-all duration-75
+                    ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+        onPointerDown={start}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onPointerLeave={stop}
+      >
+        擦る
+      </button>
+    </div>
   )
 }
 
@@ -755,6 +808,7 @@ export default function Controller() {
           <ScratchButton
             channel={activeDeck}
             bpm={(dj.decks[activeDeck].bpm ?? 0) * dj.rate(activeDeck as DeckIndex)}
+            beatPhase={() => dj.beatPhase(activeDeck as DeckIndex)}
             send={send}
           />
         </div>

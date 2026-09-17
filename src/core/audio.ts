@@ -148,8 +148,8 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   const send = (d: Deck, msg: Record<string, unknown>) => d.node?.port.postMessage(msg)
 
-  // 実際に鳴らすレート。タンテに触れている間はジョグが決める
-  const rateOf = (d: Deck) => (d.touching ? d.scratch : d.tempo * (1 + d.trim))
+  // 実際に鳴らすレート。擦りは別ヘッドが受け持つので、ここには効かない
+  const rateOf = (d: Deck) => d.tempo * (1 + d.trim)
 
   const positionOf = (d: Deck) => {
     const moved = d.playing ? (ctx.currentTime - d.reportedAt) * rateOf(d) : 0
@@ -212,7 +212,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   // 拍を合わせる。両方鳴っているときだけ。片方が止まっていれば頭は合わせられない
   function alignPhase(d: Deck, m: Deck) {
-    if (!d.playing || !m.playing || d.touching) return
+    if (!d.playing || !m.playing) return
     const err = phaseErrorOf(d, m)
     if (err === null) return
     seekTo(d, positionOf(d) + err * beatLenOf(d))
@@ -240,7 +240,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     for (const d of decks) {
       if (d === m || !d.synced) continue
       followMaster(d)
-      if (!d.playing || !m.playing || d.touching) { d.trim = 0; continue }
+      if (!d.playing || !m.playing) { d.trim = 0; continue }
       const err = phaseErrorOf(d, m)
       if (err === null || Math.abs(err) > LOCK_LIMIT) { d.trim = 0; continue }
       d.trim = Math.max(-LOCK_MAX, Math.min(LOCK_MAX, err * LOCK_GAIN))
@@ -326,28 +326,30 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     update(d, { playing: false })
   }
 
-  // タンテに触れた。離すまではジョグがレートを握る
+  // タンテに触れた。擦りヘッドを起こすだけで、曲はそのまま流れ続ける
   function touch(i: DeckIndex, down: boolean) {
     const d = decks[i]
     if (d.touching === down) return
-    if (d.playing) markAt(d, positionOf(d))
     d.touching = down
     d.scratch = 0
-    applyRate(d)
-
-    // 止まっているデッキでも、触れている間は擦った音が出る
-    if (!d.playing && d.loaded) send(d, { type: down ? 'play' : 'pause' })
-
-    // 擦れば拍は当然ずれる。指を離した時点で拍へ戻す
-    if (!down && d.synced) alignPhase(d, decks[masterDeck])
+    send(d, { type: 'scratch', value: down })
+    send(d, { type: 'srate', value: 0 })
+    if (!down) send(d, { type: 'gate', value: 1 })
   }
 
-  // amount は -1..1。負なら逆に回る
+  // amount は -1..1。負なら逆に回る。手を止めれば擦りヘッドも止まり、無音になる
   function jog(i: DeckIndex, amount: number) {
     const d = decks[i]
     if (!d.touching) return
     d.scratch = amount * SCRATCH_GAIN
-    applyRate(d)
+    send(d, { type: 'srate', value: d.scratch })
+  }
+
+  // 擦り音の音量。トランスフォーマーのように拍で刻むのに使う。value は 0..127
+  function setScratchGate(i: DeckIndex, value: number) {
+    const d = decks[i]
+    if (!d.touching) return
+    send(d, { type: 'gate', value: Math.max(0, Math.min(127, value)) / 127 })
   }
 
   // value は 0..16383。中央で等速
@@ -482,8 +484,9 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
   return {
     load, play, pause, toggle,
     cuePress, cueRelease,
-    touch, jog, setTempo, setKeylock, setEq, setFilter, seek, hotCue, setBpm,
+    touch, jog, setScratchGate, setTempo, setKeylock, setEq, setFilter, seek, hotCue, setBpm,
     sync, setMaster,
+    beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     position: (i: DeckIndex) => positionOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,

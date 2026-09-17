@@ -1,5 +1,7 @@
-// デッキ1台分の読み出し。速度を負にもできるので、逆回転と擦りができる。
-// 位置はここが正。メインスレッドへは間引いて知らせる。
+// デッキ1台分の読み出し。ヘッドは2本ある。
+//   主ヘッド  : 曲を鳴らす。テンポだけで進む。擦っても乱れない
+//   擦りヘッド: ジョグの動きだけで読む。止めれば無音、押せば音が出る
+// 位置は主ヘッドがここで持つ。メインスレッドへは間引いて知らせる。
 
 const GLIDE_SEC = 0.006   // 速度を変えたときの追従。切り替えのクリックを消す
 const REPORT_BLOCKS = 16  // 位置を知らせる間隔
@@ -11,6 +13,10 @@ const MATCH = 128           // 波形の合い具合を測る長さ
 const KEYLOCK_MIN = 0.05    // この範囲の速度でだけ働かせる。擦っている間は素通し
 const KEYLOCK_MAX = 4
 const KEYLOCK_DEAD = 0.001  // 等速とみなす幅
+
+// 擦りヘッド
+const FADE_SEC = 0.005      // 出し入れの角を取る
+const DUCK = 0.35           // 擦っている間、曲をこれだけ引っ込める
 
 class DeckProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -25,6 +31,14 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.glide = 1 - Math.exp(-1 / (GLIDE_SEC * sampleRate))
 
     this.keylock = false
+    this.scratching = false
+    this.scratchPos = 0
+    this.scratchRate = 0
+    this.scratchTarget = 0
+    this.gate = 1        // トランスフォーマー用の音量。狙いの値
+    this.gateNow = 1
+    this.env = 0         // 擦りヘッドの出し入れ
+    this.fade = 1 - Math.exp(-1 / (FADE_SEC * sampleRate))
     this.hop = Math.round(HOP_SEC * sampleRate)
     this.grainOut = 0    // 消えていく粒の読み位置
     this.grainIn = 0     // 現れる粒の読み位置
@@ -46,6 +60,13 @@ class DeckProcessor extends AudioWorkletProcessor {
       else if (data.type === 'seek')  { this.position = Math.max(0, Math.min(this.length - 1, data.position)); this.stitching = false }
       else if (data.type === 'rate')  this.target = data.value
       else if (data.type === 'keylock') { this.keylock = Boolean(data.value); this.stitching = false }
+      // 触れた時点の場所から擦り始める。曲の方はそのまま進み続ける
+      else if (data.type === 'scratch') {
+        this.scratching = Boolean(data.value)
+        if (this.scratching) { this.scratchPos = this.position; this.scratchRate = 0; this.scratchTarget = 0 }
+      }
+      else if (data.type === 'srate') this.scratchTarget = data.value
+      else if (data.type === 'gate')  this.gate = Math.max(0, Math.min(1, data.value))
     }
   }
 
@@ -84,7 +105,8 @@ class DeckProcessor extends AudioWorkletProcessor {
     const left = out[0]
     const right = out.length > 1 ? out[1] : null
 
-    if (!this.channels.length || !this.playing) {
+    // 曲も擦りも鳴っていないなら何もしない
+    if (!this.channels.length || (!this.playing && this.env < 1e-4 && !this.scratching)) {
       this.rate += (0 - this.rate) * this.glide
       return true
     }
@@ -93,46 +115,68 @@ class DeckProcessor extends AudioWorkletProcessor {
     const b = this.channels[1] ?? a
 
     for (let i = 0; i < left.length; i++) {
-      this.rate += (this.target - this.rate) * this.glide
+      let l = 0
+      let r = 0
 
-      // 貼り直しが効くのは、前向きに、ほどほどの速さで回っているときだけ
-      const stretch = this.keylock
-        && this.rate > KEYLOCK_MIN && this.rate < KEYLOCK_MAX
-        && Math.abs(this.rate - 1) > KEYLOCK_DEAD
+      // --- 主ヘッド。擦っても進み方は変わらない ---
+      if (this.playing) {
+        this.rate += (this.target - this.rate) * this.glide
 
-      if (stretch) {
-        if (!this.stitching) {
-          this.grainOut = this.position
-          this.grainIn = this.position
-          this.age = 0
-          this.stitching = true
+        // 貼り直しが効くのは、前向きに、ほどほどの速さで回っているときだけ
+        const stretch = this.keylock
+          && this.rate > KEYLOCK_MIN && this.rate < KEYLOCK_MAX
+          && Math.abs(this.rate - 1) > KEYLOCK_DEAD
+
+        if (stretch) {
+          if (!this.stitching) {
+            this.grainOut = this.position
+            this.grainIn = this.position
+            this.age = 0
+            this.stitching = true
+          }
+          if (this.age >= this.hop) {
+            this.grainOut = this.grainIn
+            this.grainIn = this.alignment(this.position)
+            this.age = 0
+          }
+
+          // 粒どうしを三角の重みで渡す。重みの和は常に1
+          const w = this.age / this.hop
+          l = this.sample(a, this.grainOut) * (1 - w) + this.sample(a, this.grainIn) * w
+          r = this.sample(b, this.grainOut) * (1 - w) + this.sample(b, this.grainIn) * w
+
+          // 粒は等速で読む。だからピッチが変わらない
+          this.grainOut++
+          this.grainIn++
+          this.age++
+        } else {
+          this.stitching = false
+          l = this.sample(a, this.position)
+          r = this.sample(b, this.position)
         }
-        if (this.age >= this.hop) {
-          this.grainOut = this.grainIn
-          this.grainIn = this.alignment(this.position)
-          this.age = 0
-        }
 
-        // 粒どうしを三角の重みで渡す。重みの和は常に1
-        const w = this.age / this.hop
-        left[i] = this.sample(a, this.grainOut) * (1 - w) + this.sample(a, this.grainIn) * w
-        if (right) right[i] = this.sample(b, this.grainOut) * (1 - w) + this.sample(b, this.grainIn) * w
-
-        // 粒は等速で読む。だからピッチが変わらない
-        this.grainOut++
-        this.grainIn++
-        this.age++
-      } else {
-        this.stitching = false
-        left[i] = this.sample(a, this.position)
-        if (right) right[i] = this.sample(b, this.position)
+        this.position += this.rate
       }
 
-      this.position += this.rate
+      // --- 擦りヘッド。ジョグの速さでしか動かないので、止めれば無音 ---
+      this.env += ((this.scratching ? 1 : 0) - this.env) * this.fade
+      if (this.env > 1e-4) {
+        this.scratchRate += (this.scratchTarget - this.scratchRate) * this.glide
+        this.gateNow += (this.gate - this.gateNow) * this.fade
+
+        const level = this.env * this.gateNow
+        const duck = 1 - DUCK * this.env
+        l = l * duck + this.sample(a, this.scratchPos) * level
+        r = r * duck + this.sample(b, this.scratchPos) * level
+        this.scratchPos += this.scratchRate
+      }
+
+      left[i] = l
+      if (right) right[i] = r
     }
 
     // 端に着いたら止める
-    if (this.position >= this.length - 1) {
+    if (this.playing && this.position >= this.length - 1) {
       this.position = this.length - 1
       this.playing = false
       this.stitching = false
