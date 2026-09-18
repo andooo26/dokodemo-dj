@@ -3,11 +3,10 @@ import type { NextRequest } from 'next/server'
 
 const MOBILE_UA = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i
 
-// 端末ごとにページを振り分ける
+// モニタだけPC専用にする。入口の選択はルートの画面が受け持つ
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const isMobile = MOBILE_UA.test(request.headers.get('user-agent') ?? '')
-  const home = isMobile ? '/touch' : '/output'
 
   // ルームコードを落とさずに転送する
   const redirect = (to: string) => {
@@ -16,15 +15,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // ルートは端末に応じた入口へ
-  if (pathname === '/') return redirect(home)
-
-  // モニタはPC専用。コントローラはどちらでも開ける
+  // モニタはPC専用。スマホで開いたらコントローラへ回す
   if (pathname === '/output' && isMobile) return redirect('/touch')
 
   return NextResponse.next()
 }
 
 export const config = {
-  matcher: ['/', '/touch', '/output'],
+  matcher: ['/output'],
 }

@@ -326,10 +326,10 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     update(d, { playing: false })
   }
 
-  // タンテに触れた。擦りヘッドを起こすだけで、曲はそのまま流れ続ける
+  // タンテに触れた。触れた地点の数秒が擦りヘッドへ渡り、曲はそのまま流れ続ける
   function touch(i: DeckIndex, down: boolean) {
     const d = decks[i]
-    if (d.touching === down) return
+    if (d.touching === down || !d.loaded) return
     d.touching = down
     d.scratch = 0
     send(d, { type: 'scratch', value: down })
@@ -488,6 +488,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     sync, setMaster,
     beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     position: (i: DeckIndex) => positionOf(decks[i]),
+    beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,
     states: () => decks.map(d => d.state),

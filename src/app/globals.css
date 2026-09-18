@@ -24,3 +24,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 操作画面では長押しのメニューと文字選択を止める。
+   Tailwind の select-none は user-select だけなので、iOS の callout は別に消す */
+[data-controller],
+[data-controller] * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 画像や動画の長押し保存も塞ぐ */
+[data-controller] canvas,
+[data-controller] video {
+  -webkit-user-drag: none;
+}
