@@ -9,6 +9,7 @@ import type { MidiMsg } from '@/core/codec'
 const empty = (): DeckState => ({
   name: null, duration: 0, bpm: null, beat: null, bar: 0, playing: false, cue: 0,
   keylock: false, synced: false, master: false, loading: false,
+  fx: 'echo', fxOn: false, fxBeat: 3, fxDepth: 64,
   cues: [null, null, null, null],
 })
 const EMPTY: DeckState[] = [empty(), empty()]
@@ -47,7 +48,6 @@ export function useDjEngine() {
   const setMaster = useCallback((deck: DeckIndex) => engineRef.current?.setMaster(deck), [])
   const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
-  const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
   return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, beatPhase, resume }

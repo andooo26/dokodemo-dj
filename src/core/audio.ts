@@ -16,6 +16,10 @@ export type DeckState = {
   cue: number
   cues: (number | null)[]   // ホットキュー4つ。未登録は null
   keylock: boolean          // テンポを変えてもピッチを保つ
+  fx: FxKind                // 選んでいるエフェクト
+  fxOn: boolean
+  fxBeat: number            // FX_BEATS の位置
+  fxDepth: number           // 0..127
   synced: boolean           // マスターに追従しているか
   master: boolean           // このデッキがテンポの基準か
   loading: boolean
@@ -28,6 +32,30 @@ export const HOTCUE_COUNT = 4
 export const PEAKS_PER_SEC = 100    // 波形表示の解像度。拡大に耐えるよう秒あたりで持つ
 export const HOTCUE_HOLD_MS = 700   // 登録済みをこれだけ押し続けると消す
 export const BEATS_PER_BAR = 4
+
+// rekordbox の Beat FX にならい、効果の時間は拍から決める
+export type FxKind = 'echo' | 'flanger' | 'trans'
+export const FX_KINDS: FxKind[] = ['echo', 'flanger', 'trans']
+export const FX_BEATS = [
+  { label: '1/16', value: 1 / 16 },
+  { label: '1/8',  value: 1 / 8  },
+  { label: '1/4',  value: 1 / 4  },
+  { label: '1/2',  value: 1 / 2  },
+  { label: '1',    value: 1      },
+  { label: '2',    value: 2      },
+  { label: '4',    value: 4      },
+]
+// 効果ごとに気持ちのよい既定値が違う。掛け替えたときはここへ戻す
+const FX_DEFAULT_BEAT: Record<FxKind, number> = { echo: 3, flanger: 6, trans: 2 }
+
+const ECHO_MAX_SEC = 8        // 遅い曲の4拍でも足りる長さ
+const ECHO_FB_MAX = 0.8       // これ以上返すと発振する
+const FL_BASE_SEC = 0.0005    // フランジャの最短ディレイ
+const FL_SWEEP_SEC = 0.0035   // 掃引の幅
+const FL_FB_MAX = 0.65
+const GATE_EDGE = 0.003       // ゲートの角。短すぎるとプチッと鳴る
+const FX_TICK_MS = 50         // ゲートを先に置きにいく間隔
+const FX_AHEAD = 0.3          // どれだけ先まで置くか
 
 // 同期のズレを戻す速さ。急に直すと音程が跳ねるので、数拍かけて寄せる
 const LOCK_MS = 250       // ズレを見にいく間隔
@@ -44,6 +72,7 @@ const FILTER_MAX_HZ = 18000
 const emptyState = (): DeckState => ({
   name: null, duration: 0, bpm: null, beat: null, bar: 0, playing: false, cue: 0,
   keylock: false, synced: false, master: false, loading: false,
+  fx: 'echo', fxOn: false, fxBeat: FX_DEFAULT_BEAT.echo, fxDepth: 64,
   cues: Array(HOTCUE_COUNT).fill(null),
 })
 
@@ -57,6 +86,18 @@ type Deck = {
   hpf: BiquadFilterNode
   lpf: BiquadFilterNode
   gain: GainNode
+  fxIn: GainNode
+  fxOut: GainNode
+  transGate: GainNode   // 本線。TRANS はここを振る
+  echoDelay: DelayNode
+  echoFb: GainNode
+  echoWet: GainNode
+  flDelay: DelayNode
+  flFb: GainNode
+  flWet: GainNode
+  flSweep: GainNode     // LFO の振れ幅
+  flLfo: OscillatorNode | null
+  gateAt: number        // 次にゲートを置く時刻
   playing: boolean
   reportedPos: number   // ワークレットから届いた位置
   reportedAt: number    // それを受け取った時刻
@@ -110,11 +151,42 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     hpf.type  = 'highpass';  hpf.frequency.value  = 20
     lpf.type  = 'lowpass';   lpf.frequency.value  = 20000
 
-    high.connect(mid).connect(low).connect(hpf).connect(lpf).connect(gain).connect(master)
+    // エフェクト。TRANS は本線のゲート、ECHO と FLANGER は並列に足す
+    const fxIn      = ctx.createGain()
+    const fxOut     = ctx.createGain()
+    const transGate = ctx.createGain()
+    const echoDelay = ctx.createDelay(ECHO_MAX_SEC)
+    const echoFb    = ctx.createGain()
+    const echoWet   = ctx.createGain()
+    const flDelay   = ctx.createDelay(0.05)
+    const flFb      = ctx.createGain()
+    const flWet     = ctx.createGain()
+    const flSweep   = ctx.createGain()
+
+    echoFb.gain.value = 0
+    echoWet.gain.value = 0
+    flFb.gain.value = 0
+    flWet.gain.value = 0
+    flSweep.gain.value = 0
+    flDelay.delayTime.value = FL_BASE_SEC
+
+    high.connect(mid).connect(low).connect(hpf).connect(lpf).connect(gain).connect(fxIn)
+
+    fxIn.connect(transGate).connect(fxOut)          // 素通しの道。TRANSはここを刻む
+    fxIn.connect(echoDelay)
+    echoDelay.connect(echoFb).connect(echoDelay)    // 返して繰り返させる
+    echoDelay.connect(echoWet).connect(fxOut)
+    fxIn.connect(flDelay)
+    flDelay.connect(flFb).connect(flDelay)
+    flDelay.connect(flWet).connect(fxOut)
+    flSweep.connect(flDelay.delayTime)              // LFOで掃引する
+    fxOut.connect(master)
 
     return {
       node: null, peaks: null, loaded: false,
       high, mid, low, hpf, lpf, gain,
+      fxIn, fxOut, transGate, echoDelay, echoFb, echoWet,
+      flDelay, flFb, flWet, flSweep, flLfo: null, gateAt: 0,
       playing: false, reportedPos: 0, reportedAt: 0,
       tempo: 1, keylock: false, synced: false, trim: 0, touching: false, scratch: 0, cue: 0,
       state: emptyState(),
@@ -224,6 +296,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     if (!d.state.bpm || !m.state.bpm) return
     d.tempo = (m.state.bpm * m.tempo) / d.state.bpm
     applyRate(d)
+    retimeFx(d)
   }
 
   function unsync(d: Deck) {
@@ -247,6 +320,96 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
       applyRate(d)
     }
   }, LOCK_MS)
+
+  // --- エフェクト ---
+  // 効果の時間はすべて「実時間の拍長 × 分割」で決まる。
+  // 拍長にはテンポフェーダを掛ける。曲の中の秒数ではなく、耳に届く速さで合わせる
+
+  const beatSecOf = (d: Deck) => 60 / ((d.state.bpm ?? 120) * d.tempo)
+  const fxSecOf = (d: Deck) => beatSecOf(d) * FX_BEATS[d.state.fxBeat].value
+  const depthOf = (d: Deck) => d.state.fxDepth / 127
+
+  // 次の拍が鳴る時刻。グリッドが無ければ今から始める
+  function nextBeatAt(d: Deck): number {
+    const phase = beatPhaseOf(d)
+    if (phase === null || !d.playing) return ctx.currentTime
+    return ctx.currentTime + (1 - phase) * beatSecOf(d)
+  }
+
+  // テンポや分割が変わったら、掛かっている効果の時間を追従させる
+  function retimeFx(d: Deck) {
+    const now = ctx.currentTime
+    const sec = fxSecOf(d)
+    if (d.state.fx === 'echo' && d.state.fxOn) {
+      d.echoDelay.delayTime.setTargetAtTime(Math.min(ECHO_MAX_SEC, sec), now, RAMP)
+    }
+    if (d.state.fx === 'flanger' && d.state.fxOn && d.flLfo) {
+      d.flLfo.frequency.setTargetAtTime(1 / sec, now, RAMP)
+    }
+  }
+
+  // 選んでいる効果だけを立ち上げ、残りは黙らせる
+  function applyFx(d: Deck) {
+    const now = ctx.currentTime
+    const on = d.state.fxOn
+    const depth = depthOf(d)
+    const sec = fxSecOf(d)
+
+    const echo = on && d.state.fx === 'echo'
+    const flanger = on && d.state.fx === 'flanger'
+    const trans = on && d.state.fx === 'trans'
+
+    // ECHO。切ったら返しも止めて、尾を引かせない
+    d.echoDelay.delayTime.setTargetAtTime(Math.min(ECHO_MAX_SEC, sec), now, RAMP)
+    d.echoWet.gain.setTargetAtTime(echo ? depth : 0, now, RAMP)
+    d.echoFb.gain.setTargetAtTime(echo ? depth * ECHO_FB_MAX : 0, now, RAMP)
+
+    // FLANGER。掛けるたびにLFOを作り直し、次の拍から掃引を始める
+    if (flanger) {
+      if (!d.flLfo) {
+        const lfo = ctx.createOscillator()
+        lfo.type = 'sine'
+        lfo.frequency.value = 1 / sec
+        lfo.connect(d.flSweep)
+        lfo.start(nextBeatAt(d))
+        d.flLfo = lfo
+      }
+      d.flSweep.gain.setTargetAtTime(FL_SWEEP_SEC * depth, now, RAMP)
+      d.flWet.gain.setTargetAtTime(depth, now, RAMP)
+      d.flFb.gain.setTargetAtTime(depth * FL_FB_MAX, now, RAMP)
+    } else {
+      d.flWet.gain.setTargetAtTime(0, now, RAMP)
+      d.flFb.gain.setTargetAtTime(0, now, RAMP)
+      if (d.flLfo) { d.flLfo.stop(now + 0.05); d.flLfo.disconnect(); d.flLfo = null }
+    }
+
+    // TRANS。止めるときは予約を取り消して素通しへ戻す
+    if (trans) {
+      if (!d.gateAt) d.gateAt = nextBeatAt(d)
+    } else {
+      d.gateAt = 0
+      d.transGate.gain.cancelScheduledValues(now)
+      d.transGate.gain.setTargetAtTime(1, now, RAMP)
+    }
+  }
+
+  // ゲートは少し先まで置いておく。タイマーの揺れでは崩れない
+  const fxTimer = setInterval(() => {
+    const now = ctx.currentTime
+    for (const d of decks) {
+      if (!d.gateAt) continue
+      const period = fxSecOf(d)
+      const floor = 1 - depthOf(d)
+      while (d.gateAt < now + FX_AHEAD) {
+        const g = d.transGate.gain
+        g.setValueAtTime(floor, d.gateAt)
+        g.linearRampToValueAtTime(1, d.gateAt + GATE_EDGE)
+        g.setValueAtTime(1, d.gateAt + period / 2)
+        g.linearRampToValueAtTime(floor, d.gateAt + period / 2 + GATE_EDGE)
+        d.gateAt += period
+      }
+    }
+  }, FX_TICK_MS)
 
   // --- 外向きの操作 ---
 
@@ -359,6 +522,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     d.tempo = 1 + ratio * TEMPO_RANGE
     unsync(d)   // フェーダを自分で動かしたら同期は外れる
     applyRate(d)
+    retimeFx(d)
     if (decks.indexOf(d) === masterDeck) decks.forEach(o => { if (o.synced) followMaster(o) })
   }
 
@@ -384,6 +548,41 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     unsync(decks[i])
     decks.forEach((d, k) => update(d, { master: k === i }))
     decks.forEach(d => { if (d.synced) followMaster(d) })
+  }
+
+  // 掛け替え。分割はその効果の既定へ戻す。ECHOの1/2とFLANGERの4では意味が違うため
+  function setFx(i: DeckIndex, kind: FxKind) {
+    const d = decks[i]
+    if (d.state.fx === kind) return
+    d.gateAt = 0
+    d.transGate.gain.cancelScheduledValues(ctx.currentTime)
+    d.transGate.gain.setTargetAtTime(1, ctx.currentTime, RAMP)
+    update(d, { fx: kind, fxBeat: FX_DEFAULT_BEAT[kind] })
+    applyFx(d)
+  }
+
+  function setFxOn(i: DeckIndex, on: boolean) {
+    const d = decks[i]
+    if (d.state.fxOn === on) return
+    update(d, { fxOn: on })
+    applyFx(d)
+  }
+
+  // value は FX_BEATS の位置
+  function setFxBeat(i: DeckIndex, value: number) {
+    const d = decks[i]
+    const v = Math.max(0, Math.min(FX_BEATS.length - 1, Math.round(value)))
+    if (d.state.fxBeat === v) return
+    update(d, { fxBeat: v })
+    d.gateAt = 0   // 刻みが変わるので置き直す
+    applyFx(d)
+  }
+
+  // value は 0..127
+  function setFxDepth(i: DeckIndex, value: number) {
+    const d = decks[i]
+    update(d, { fxDepth: Math.max(0, Math.min(127, value)) })
+    applyFx(d)
   }
 
   // テンポを変えてもピッチを保つ。擦っている間はワークレット側で素通しになる
@@ -459,6 +658,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     if (!d.state.bpm) return
     const v = Math.min(400, Math.max(20, bpm))
     update(d, { bpm: Math.round(v * 10) / 10 })
+    retimeFx(d)
     if (d.synced) followMaster(d)
     else if (decks.indexOf(d) === masterDeck) decks.forEach(o => { if (o.synced) followMaster(o) })
   }
@@ -475,9 +675,17 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
 
   function dispose() {
     clearInterval(lock)
+    clearInterval(fxTimer)
+    decks.forEach(d => { if (d.flLfo) { d.flLfo.stop(); d.flLfo.disconnect(); d.flLfo = null } })
     holds.forEach(clearTimeout)
     holds.clear()
-    decks.forEach(d => { send(d, { type: 'pause' }); d.node?.disconnect(); d.gain.disconnect() })
+    decks.forEach(d => {
+      send(d, { type: 'pause' })
+      d.node?.disconnect()
+      d.gain.disconnect()
+      d.fxIn.disconnect()
+      d.fxOut.disconnect()
+    })
     ctx.close()
   }
 
@@ -488,7 +696,6 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     sync, setMaster,
     beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     position: (i: DeckIndex) => positionOf(decks[i]),
-    beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,
     states: () => decks.map(d => d.state),
