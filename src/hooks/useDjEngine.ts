@@ -45,6 +45,7 @@ export function useDjEngine() {
   const setKeylock = useCallback((deck: DeckIndex, on: boolean) => engineRef.current?.setKeylock(deck, on), [])
   const sync     = useCallback((deck: DeckIndex) => engineRef.current?.sync(deck), [])
   const setMaster = useCallback((deck: DeckIndex) => engineRef.current?.setMaster(deck), [])
+  const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
   const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
