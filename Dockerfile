@@ -2,7 +2,7 @@
 FROM node:24-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=optional --ignore-scripts
+RUN npm ci --ignore-scripts
 COPY . .
 RUN node scripts/setup-mediapipe.mjs && npx next build
 

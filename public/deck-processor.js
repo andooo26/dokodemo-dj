@@ -33,6 +33,14 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.glide = 1 - Math.exp(-1 / (GLIDE_SEC * sampleRate))
 
     this.keylock = false
+    this.scratching = false
+    this.scratchPos = 0
+    this.scratchRate = 0
+    this.scratchTarget = 0
+    this.gate = 1        // トランスフォーマー用の音量。狙いの値
+    this.gateNow = 1
+    this.env = 0         // 擦りヘッドの出し入れ
+    this.fade = 1 - Math.exp(-1 / (FADE_SEC * sampleRate))
     this.hop = Math.round(HOP_SEC * sampleRate)
     this.grainOut = 0    // 消えていく粒の読み位置
     this.grainIn = 0     // 現れる粒の読み位置
