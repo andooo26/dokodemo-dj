@@ -696,7 +696,6 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     sync, setMaster,
     beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     position: (i: DeckIndex) => positionOf(decks[i]),
-    beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,
     rate:  (i: DeckIndex) => decks[i].tempo,
     states: () => decks.map(d => d.state),
