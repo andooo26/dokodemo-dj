@@ -242,35 +242,33 @@ function PlayStopButton({ channel, send }: {
 }
 
 // マスターに拍を合わせる。長押しで自分をマスターにする
-function SyncButton({ channel, state, send }: {
-  channel: number
+function SyncButton({ state, onSync, onMaster }: {
   state: DeckState
-  send: (msg: MidiMsg) => void
+  onSync: () => void
+  onMaster: () => void
 }) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const heldRef  = useRef(false)
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
-  const note = (n: number) => send({ type: 'note_on', channel, note: n, velocity: 127 })
-
   return (
     <button
-      className={`w-12 h-12 rounded-full text-xs font-semibold select-none touch-none border
-                  transition-all duration-75
-                  ${state.master
-                    ? 'bg-amber-500 border-amber-400 text-gray-950'
-                    : state.synced
-                      ? 'bg-sky-500 border-sky-400 text-gray-950'
-                      : 'bg-gray-800 border-gray-700 text-gray-200'}`}
+      className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border ${
+        state.master
+          ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+          : state.synced
+            ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+            : 'bg-gray-800 border-gray-700 text-gray-400'
+      }`}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
         heldRef.current = false
-        timerRef.current = setTimeout(() => { heldRef.current = true; note(MASTER_NOTE) }, 500)
+        timerRef.current = setTimeout(() => { heldRef.current = true; onMaster() }, 500)
       }}
       onPointerUp={() => {
         if (timerRef.current) clearTimeout(timerRef.current)
-        if (!heldRef.current) note(SYNC_NOTE)
+        if (!heldRef.current) onSync()
       }}
       onPointerCancel={() => { if (timerRef.current) clearTimeout(timerRef.current) }}
     >
@@ -362,12 +360,6 @@ function ScratchButton({ channel, bpm, beatPhase, send }: {
   return (
     <div className="flex flex-col gap-1 items-center">
       <button
-        onClick={() => setPattern(p => (p + 1) % SCRATCH_PATTERNS.length)}
-        className="text-[9px] leading-none px-1.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-400"
-      >
-        {SCRATCH_PATTERNS[pattern].id}
-      </button>
-      <button
         className={`w-12 h-12 rounded-full text-[10px] font-semibold select-none touch-none border border-gray-700
                     transition-all duration-75
                     ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
@@ -377,6 +369,12 @@ function ScratchButton({ channel, bpm, beatPhase, send }: {
         onPointerLeave={stop}
       >
         擦る
+      </button>
+      <button
+        onClick={() => setPattern(p => (p + 1) % SCRATCH_PATTERNS.length)}
+        className="text-[9px] leading-none px-1.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-400"
+      >
+        {SCRATCH_PATTERNS[pattern].id}
       </button>
     </div>
   )
@@ -611,7 +609,7 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm, onKeylock }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm, onKeylock, onSync, onMaster }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
@@ -621,6 +619,8 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
   onSeek: (to: number) => void
   onBpm: (bpm: number) => void
   onKeylock: (on: boolean) => void
+  onSync: () => void
+  onMaster: () => void
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
@@ -649,6 +649,7 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
           {state.bpm ? (state.bpm * tempo).toFixed(1) : '--.-'}
           <span className="text-xs text-gray-500 ml-1">BPM</span>
         </span>
+        <SyncButton state={state} onSync={onSync} onMaster={onMaster} />
         {/* テンポを変えてもピッチを保つ */}
         <button
           onClick={() => onKeylock(!state.keylock)}
@@ -797,6 +798,8 @@ export default function Controller() {
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
         onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
         onKeylock={(on) => dj.setKeylock(activeDeck as DeckIndex, on)}
+        onSync={() => send({ type: 'note_on', channel: activeDeck, note: SYNC_NOTE, velocity: 127 })}
+        onMaster={() => send({ type: 'note_on', channel: activeDeck, note: MASTER_NOTE, velocity: 127 })}
       />
 
       {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}
@@ -808,15 +811,14 @@ export default function Controller() {
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
-          <CuePlayButton channel={activeDeck} send={send} />
-          <PlayStopButton channel={activeDeck} send={send} />
-          <SyncButton channel={activeDeck} state={dj.decks[activeDeck]} send={send} />
           <ScratchButton
             channel={activeDeck}
             bpm={(dj.decks[activeDeck].bpm ?? 0) * dj.rate(activeDeck as DeckIndex)}
             beatPhase={() => dj.beatPhase(activeDeck as DeckIndex)}
             send={send}
           />
+          <CuePlayButton channel={activeDeck} send={send} />
+          <PlayStopButton channel={activeDeck} send={send} />
         </div>
         <div className="absolute right-0 inset-y-0 py-2">
           <PitchFader
