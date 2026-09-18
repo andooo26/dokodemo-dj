@@ -9,6 +9,7 @@ import type { MidiMsg } from '@/core/codec'
 const empty = (): DeckState => ({
   name: null, duration: 0, bpm: null, beat: null, bar: 0, playing: false, cue: 0,
   keylock: false, synced: false, master: false, loading: false,
+  fx: 'echo', fxOn: false, fxBeat: 3, fxDepth: 64,
   cues: [null, null, null, null],
 })
 const EMPTY: DeckState[] = [empty(), empty()]
