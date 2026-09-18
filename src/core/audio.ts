@@ -694,6 +694,7 @@ export function createDjEngine(onChange?: (states: DeckState[]) => void) {
     cuePress, cueRelease,
     touch, jog, setScratchGate, setTempo, setKeylock, setEq, setFilter, seek, hotCue, setBpm,
     sync, setMaster,
+    setFx, setFxOn, setFxBeat, setFxDepth,
     beatPhase: (i: DeckIndex) => beatPhaseOf(decks[i]),
     position: (i: DeckIndex) => positionOf(decks[i]),
     peaks: (i: DeckIndex) => decks[i].peaks,

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createDjEngine } from '@/core/audio'
 import { createMidiHandler } from '@/core/djmidi'
-import type { DeckIndex, DeckState, DjEngine } from '@/core/audio'
+import type { DeckIndex, DeckState, DjEngine, FxKind } from '@/core/audio'
 import type { MidiMsg } from '@/core/codec'
 
 const empty = (): DeckState => ({
@@ -47,8 +47,12 @@ export function useDjEngine() {
   const sync     = useCallback((deck: DeckIndex) => engineRef.current?.sync(deck), [])
   const setMaster = useCallback((deck: DeckIndex) => engineRef.current?.setMaster(deck), [])
   const beatPhase = useCallback((deck: DeckIndex) => engineRef.current?.beatPhase(deck) ?? null, [])
+  const setFx      = useCallback((deck: DeckIndex, kind: FxKind) => engineRef.current?.setFx(deck, kind), [])
+  const setFxOn    = useCallback((deck: DeckIndex, on: boolean) => engineRef.current?.setFxOn(deck, on), [])
+  const setFxBeat  = useCallback((deck: DeckIndex, v: number) => engineRef.current?.setFxBeat(deck, v), [])
+  const setFxDepth = useCallback((deck: DeckIndex, v: number) => engineRef.current?.setFxDepth(deck, v), [])
   const position = useCallback((deck: DeckIndex) => engineRef.current?.position(deck) ?? 0, [])
   const seek     = useCallback((deck: DeckIndex, to: number) => engineRef.current?.seek(deck, to), [])
 
-  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, beatPhase, resume }
+  return { decks, handle, load, seek, position, peaks, rate, setBpm, setKeylock, sync, setMaster, beatPhase, setFx, setFxOn, setFxBeat, setFxDepth, resume }
 }

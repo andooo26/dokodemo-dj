@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { useDjEngine } from '@/hooks/useDjEngine'
-import type { DeckIndex, DeckState } from '@/core/audio'
-import { PEAKS_PER_SEC, BEATS_PER_BAR } from '@/core/audio'
+import type { DeckIndex, DeckState, FxKind } from '@/core/audio'
+import { PEAKS_PER_SEC, BEATS_PER_BAR, FX_KINDS, FX_BEATS } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
@@ -737,11 +737,97 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm,
   )
 }
 
+// エフェクトは押している間だけ掛ける。rekordbox の Pad FX と同じ感覚。
+// 掛けっぱなしにしないので、戻し忘れて曲が埋もれることがない
+const FX_LABELS: Record<FxKind, string> = { echo: 'ECHO', flanger: 'FLANGER', trans: 'TRANS' }
+
+function FxPads({ state, onPick, onHold, onBeat, onDepth }: {
+  state: DeckState
+  onPick: (kind: FxKind) => void
+  onHold: (on: boolean) => void
+  onBeat: (index: number) => void
+  onDepth: (value: number) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        {FX_KINDS.map(kind => {
+          const live = state.fxOn && state.fx === kind
+          return (
+            <button
+              key={kind}
+              className={`flex-1 h-14 rounded-2xl text-xs font-semibold select-none touch-none border
+                          transition-all duration-75
+                          ${live
+                            ? 'bg-fuchsia-500 border-fuchsia-400 text-gray-950 scale-95'
+                            : 'bg-gray-900 border-gray-700 text-gray-300'}`}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId)
+                onPick(kind)
+                onHold(true)
+              }}
+              onPointerUp={() => onHold(false)}
+              onPointerCancel={() => onHold(false)}
+              onPointerLeave={() => onHold(false)}
+            >
+              {FX_LABELS[kind]}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="flex items-center gap-3">
+        {/* 効果の長さ。押すたびに細かくなる */}
+        <button
+          onClick={() => onBeat((state.fxBeat + 1) % FX_BEATS.length)}
+          className="shrink-0 w-14 text-xs px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700
+                     text-gray-300 font-mono tabular-nums"
+        >
+          {FX_BEATS[state.fxBeat].label}
+        </button>
+        <span className="text-[10px] text-gray-500 shrink-0">DEPTH</span>
+        <input
+          type="range" min={0} max={127} value={state.fxDepth}
+          onChange={e => onDepth(Number(e.target.value))}
+          className="flex-1 accent-fuchsia-500"
+        />
+      </div>
+    </div>
+  )
+}
+
+// ログは普段は畳んでおく。操作面を狭めないため
+function LogWindow({ log, onClose }: { log: string[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+         onClick={onClose}>
+      <div className="w-full max-w-md max-h-[70vh] flex flex-col bg-gray-900 border border-gray-700
+                      rounded-2xl overflow-hidden"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <span className="text-sm font-semibold">ログ</span>
+          <button onClick={onClose}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300">
+            閉じる
+          </button>
+        </div>
+        {/* ログは拾って貼れるように、ここだけ選択を許す */}
+        <div className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-0.5 select-text">
+          {log.length === 0
+            ? <p className="text-gray-600">-log-</p>
+            : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // --- Page ---
 
 export default function Controller() {
   const [mounted, setMounted]   = useState(false)
   const [activeDeck, setActiveDeck] = useState(0)
+  const [showLog, setShowLog] = useState(false)
   const [eqValues, setEqValues]   = useState([[64,64,64,64],[64,64,64,64]])
   const [pitchValues, setPitchValues] = useState([PITCH_CENTER, PITCH_CENTER])
   const dj = useDjEngine()
@@ -770,6 +856,12 @@ export default function Controller() {
               ローカル
             </span>
           )}
+          <button
+            onClick={() => setShowLog(true)}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-gray-400"
+          >
+            ログ
+          </button>
           <LinkButton href={withRoom('/ar', room)}>AR</LinkButton>
           <ConnectButton
             disabled={!mounted || status === 'connecting'}
@@ -877,12 +969,16 @@ export default function Controller() {
       </div>
       </div>
 
-      {/* Log */}
-      <div className="flex-1 bg-gray-900 rounded-2xl p-3 overflow-y-auto font-mono text-xs space-y-0.5 min-h-[160px] landscape:hidden">
-        {log.length === 0
-          ? <p className="text-gray-600">-log-</p>
-          : log.map((l, i) => <p key={i} className="text-gray-400 leading-5">{l}</p>)}
-      </div>
+      {/* FX */}
+      <FxPads
+        state={dj.decks[activeDeck]}
+        onPick={(kind) => dj.setFx(activeDeck as DeckIndex, kind)}
+        onHold={(on) => dj.setFxOn(activeDeck as DeckIndex, on)}
+        onBeat={(v) => dj.setFxBeat(activeDeck as DeckIndex, v)}
+        onDepth={(v) => dj.setFxDepth(activeDeck as DeckIndex, v)}
+      />
+
+      {showLog && <LogWindow log={log} onClose={() => setShowLog(false)} />}
 
     </main>
   )
