@@ -155,7 +155,8 @@ function PitchFader({ channel, send, value, onValueChange }: {
   const updateFromPointer = (e: React.PointerEvent) => {
     if (!trackRef.current) return
     const rect  = trackRef.current.getBoundingClientRect()
-    const ratio = 1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    // 実機と同じ向きにする
+    const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
     let v       = Math.round(ratio * PITCH_MAX)
     if (Math.abs(v - PITCH_CENTER) <= PITCH_DETENT) v = PITCH_CENTER
     onValueChange(v)
@@ -165,7 +166,7 @@ function PitchFader({ channel, send, value, onValueChange }: {
     send({ type: 'cc', channel, controller: PITCH_CC_LSB, value: lsb })
   }
 
-  const thumbPct = (1 - value / PITCH_MAX) * 100
+  const thumbPct = (value / PITCH_MAX) * 100
 
   return (
     <div ref={trackRef} className="relative w-5 h-full select-none touch-none cursor-pointer"
