@@ -14,6 +14,11 @@ import {
   PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT, pitchToCC,
 } from '@/core/mapping'
 
+// 長押しや右クリックのメニューを止める。リンクだけは通す
+function blockContextMenu(e: React.MouseEvent) {
+  if (!(e.target as HTMLElement).closest('a')) e.preventDefault()
+}
+
 // --- Components ---
 
 function Turntable({ channel, send }: {
@@ -747,10 +752,12 @@ export default function Controller() {
 
   return (
     <main
+      data-controller
       className="min-h-screen bg-gray-950 text-white w-full mx-auto flex flex-col
                  px-4 py-6 gap-6 max-w-md
                  landscape:py-3 landscape:gap-3 landscape:max-w-4xl"
       onPointerDown={() => dj.resume()}
+      onContextMenu={blockContextMenu}
     >
 
       {/* Header */}
