@@ -4,14 +4,20 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMidiBridge } from '@/hooks/useMidiBridge'
 import { useDjEngine } from '@/hooks/useDjEngine'
 import type { DeckIndex, DeckState } from '@/core/audio'
+import { PEAKS_PER_SEC, BEATS_PER_BAR } from '@/core/audio'
 import { RoomGate } from '@/components/RoomGate'
 import { withRoom } from '@/core/room'
 import type { MidiMsg, Status } from '@/hooks/useMidiBridge'
 import { LinkButton, ConnectButton } from '@/components/HeaderButton'
 import {
-  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  PADS, KNOBS, TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE, SCRATCH_GATE_CC,
   PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT, pitchToCC,
 } from '@/core/mapping'
+
+// 長押しや右クリックのメニューを止める。リンクだけは通す
+function blockContextMenu(e: React.MouseEvent) {
+  if (!(e.target as HTMLElement).closest('a')) e.preventDefault()
+}
 
 // --- Components ---
 
@@ -154,7 +160,8 @@ function PitchFader({ channel, send, value, onValueChange }: {
   const updateFromPointer = (e: React.PointerEvent) => {
     if (!trackRef.current) return
     const rect  = trackRef.current.getBoundingClientRect()
-    const ratio = 1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+    // 実機と同じ向きにする
+    const ratio = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
     let v       = Math.round(ratio * PITCH_MAX)
     if (Math.abs(v - PITCH_CENTER) <= PITCH_DETENT) v = PITCH_CENTER
     onValueChange(v)
@@ -164,7 +171,7 @@ function PitchFader({ channel, send, value, onValueChange }: {
     send({ type: 'cc', channel, controller: PITCH_CC_LSB, value: lsb })
   }
 
-  const thumbPct = (1 - value / PITCH_MAX) * 100
+  const thumbPct = (value / PITCH_MAX) * 100
 
   return (
     <div ref={trackRef} className="relative w-5 h-full select-none touch-none cursor-pointer"
@@ -234,6 +241,145 @@ function PlayStopButton({ channel, send }: {
   )
 }
 
+// マスターに拍を合わせる。長押しで自分をマスターにする
+function SyncButton({ state, onSync, onMaster }: {
+  state: DeckState
+  onSync: () => void
+  onMaster: () => void
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const heldRef  = useRef(false)
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  return (
+    <button
+      className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border ${
+        state.master
+          ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+          : state.synced
+            ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+            : 'bg-gray-800 border-gray-700 text-gray-400'
+      }`}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        heldRef.current = false
+        timerRef.current = setTimeout(() => { heldRef.current = true; onMaster() }, 500)
+      }}
+      onPointerUp={() => {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        if (!heldRef.current) onSync()
+      }}
+      onPointerCancel={() => { if (timerRef.current) clearTimeout(timerRef.current) }}
+    >
+      {state.master ? 'MST' : 'SYNC'}
+    </button>
+  )
+}
+
+// 擦りのかたち。phase は1拍の中の位置で 0〜1。
+//   swing : ジョグの速さ。正で前、負で戻る
+//   gate  : 擦り音の音量 0〜127
+const SCRATCH_PATTERNS = [
+  {
+    id: 'ベビー',
+    // 1拍で前後に1往復。いちばん基本の動き
+    shape: (phase: number) => ({
+      swing: Math.sin(phase * 2 * Math.PI) * SCRATCH_DEPTH,
+      gate: 127,
+    }),
+  },
+  {
+    id: 'チャープ',
+    // 行きはゆっくり、戻りは急。鳥の鳴き声のように聞こえる
+    shape: (phase: number) => ({
+      swing: phase < 0.6 ? SCRATCH_DEPTH * 0.7 : -SCRATCH_DEPTH * 1.05,
+      gate: 127,
+    }),
+  },
+  {
+    id: 'トランス',
+    // 送りは一定のまま、音量を8分で刻む
+    shape: (phase: number) => ({
+      swing: SCRATCH_DEPTH * 0.5,
+      gate: Math.floor(phase * 4) % 2 === 0 ? 127 : 0,
+    }),
+  },
+] as const
+
+// 拍に合わせてジョグを振る。信号はタンテを手で回したときと同じ。
+// 位相はエンジンのビートグリッドから取るので、いつ押しても拍頭から始まる
+function ScratchButton({ channel, bpm, beatPhase, send }: {
+  channel: number
+  bpm: number
+  beatPhase: () => number | null
+  send: (msg: MidiMsg) => void
+}) {
+  const [pressed, setPressed] = useState(false)
+  const [pattern, setPattern] = useState(0)
+  const frameRef = useRef(0)
+  const gateRef  = useRef(127)
+
+  const stop = () => {
+    if (!frameRef.current) return
+    cancelAnimationFrame(frameRef.current)
+    frameRef.current = 0
+    setPressed(false)
+    send({ type: 'pitch_bend', channel, value: PITCH_CENTER })
+    send({ type: 'cc', channel, controller: SCRATCH_GATE_CC, value: 127 })
+    send({ type: 'note_off', channel, note: TURNTABLE_STOP_NOTE })
+  }
+
+  useEffect(() => () => { if (frameRef.current) cancelAnimationFrame(frameRef.current) }, [])
+
+  const start = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setPressed(true)
+    gateRef.current = 127
+    send({ type: 'note_on', channel, note: TURNTABLE_STOP_NOTE, velocity: 127 })
+
+    const beat = 60000 / (bpm || 120)
+    const began = performance.now()
+    const shape = SCRATCH_PATTERNS[pattern].shape
+
+    const loop = () => {
+      // グリッドがあればそこから。無い曲は押した時点を拍頭とみなす
+      const phase = beatPhase() ?? ((performance.now() - began) % beat) / beat
+      const { swing, gate } = shape(phase)
+
+      send({ type: 'pitch_bend', channel, value: Math.round(PITCH_CENTER + swing * 4096) })
+      if (gate !== gateRef.current) {
+        gateRef.current = gate
+        send({ type: 'cc', channel, controller: SCRATCH_GATE_CC, value: gate })
+      }
+      frameRef.current = requestAnimationFrame(loop)
+    }
+    loop()
+  }
+
+  return (
+    <div className="flex flex-col gap-1 items-center">
+      <button
+        className={`w-12 h-12 rounded-full text-[10px] font-semibold select-none touch-none border border-gray-700
+                    transition-all duration-75
+                    ${pressed ? 'bg-gray-400 scale-95 text-gray-950' : 'bg-gray-800 text-gray-200'}`}
+        onPointerDown={start}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onPointerLeave={stop}
+      >
+        擦る
+      </button>
+      <button
+        onClick={() => setPattern(p => (p + 1) % SCRATCH_PATTERNS.length)}
+        className="text-[9px] leading-none px-1.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-400"
+      >
+        {SCRATCH_PATTERNS[pattern].id}
+      </button>
+    </div>
+  )
+}
+
 function Pad({ note, label, border, activeBg, armed, onNoteOn, onNoteOff }: {
   note: number; label: string; border: string; activeBg: string
   armed: boolean
@@ -292,16 +438,21 @@ function CueButton({ note, channel, label, active, onNoteOn, onNoteOff }: {
 }
 
 const CUE_COLOR = '#f59e0b'
+const ZOOM_LEVELS = [16, 8, 4]   // 拡大表示で一度に映す秒数。押すたびに寄る
+const SCRATCH_DEPTH = 0.8   // 自動スクラッチの振り幅
 
-// 全体波形。再生位置と頭出し点、ホットキューを重ねる
-function Waveform({ deck, state, position, peaks, onSeek }: {
+// 波形。zoom を渡すと、その秒数ぶんだけを再生位置を中心に映す
+function Waveform({ deck, state, position, peaks, zoom, onSeek, onNudge }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
   peaks: (deck: DeckIndex) => Float32Array | null
+  zoom?: number
   onSeek: (to: number) => void
+  onNudge?: (delta: number) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const dragRef = useRef<number | null>(null)   // 拡大時に指を滑らせた前回のX
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -335,27 +486,52 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
         return
       }
 
-      const ratio = Math.min(1, at / state.duration)
-      const barW  = w / data.length
-      const bars  = (from: number, to: number, color: string) => {
+      // 映す時間の範囲。拡大時は再生位置が真ん中に来る
+      const from = zoom ? at - zoom / 2 : 0
+      const span = zoom ?? state.duration
+      const xOf  = (t: number) => ((t - from) / span) * w
+      const perPx = span / w
+
+      // 1ピクセルが受け持つ範囲の山を拾う。拡大しても間引かれない
+      const bars = (x0: number, x1: number, color: string) => {
         g.beginPath()
-        for (let i = from; i < to; i++) {
-          const y = Math.max(1, data[i] * mid * 0.95)
-          g.rect(i * barW, mid - y, Math.max(1, barW - 0.5), y * 2)
+        for (let x = Math.max(0, Math.floor(x0)); x < Math.min(w, Math.ceil(x1)); x++) {
+          const t = from + x * perPx
+          if (t < 0 || t >= state.duration) continue
+          const i0 = Math.floor(t * PEAKS_PER_SEC)
+          const i1 = Math.max(i0 + 1, Math.floor((t + perPx) * PEAKS_PER_SEC))
+          let peak = 0
+          for (let i = i0; i < i1 && i < data.length; i++) {
+            if (data[i] > peak) peak = data[i]
+          }
+          const y = Math.max(1, peak * mid * 0.95)
+          g.rect(x, mid - y, 1, y * 2)
         }
         g.fillStyle = color
         g.fill()
       }
-      const played = Math.round(ratio * data.length)
-      bars(0, played, '#9ca3af')
-      bars(played, data.length, '#4b5563')
+      // 拍の線。拡大時だけ引く。全体表示では潰れて読めない
+      if (zoom && state.bpm && state.beat !== null) {
+        const len = 60 / state.bpm
+        for (let n = Math.ceil((from - state.beat) / len); ; n++) {
+          const t = state.beat + n * len
+          if (t > from + span) break
+          if (t < 0 || t > state.duration) continue
+          const downbeat = Math.abs(Math.round((t - state.bar) / len)) % BEATS_PER_BAR === 0
+          g.fillStyle = downbeat ? '#64748b' : '#334155'
+          g.fillRect(xOf(t), downbeat ? 0 : h * 0.25, 1, downbeat ? h : h * 0.5)
+        }
+      }
 
-      const xOf = (t: number) => (t / state.duration) * w
+      const head = xOf(at)
+      bars(0, head, '#9ca3af')
+      bars(head, w, '#4b5563')
 
       // ホットキューは下端にチップ。番号で見分ける
       state.cues.forEach((t, i) => {
         if (t === null) return
         const x = xOf(t)
+        if (x < 0 || x > w) return
         g.fillStyle = PADS[i].hex
         g.fillRect(x - 1, 0, 2, h)
         g.fillRect(x - 1, h - 11, 11, 11)
@@ -366,22 +542,46 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
 
       // CUE点は上端に旗。DJソフトと同じ見た目に寄せる
       const cueX = xOf(state.cue)
-      g.fillStyle = CUE_COLOR
-      g.fillRect(cueX - 1, 0, 2, h)
-      g.beginPath()
-      g.moveTo(cueX - 1, 0)
-      g.lineTo(cueX + 10, 0)
-      g.lineTo(cueX - 1, 11)
-      g.closePath()
-      g.fill()
+      if (cueX >= 0 && cueX <= w) {
+        g.fillStyle = CUE_COLOR
+        g.fillRect(cueX - 1, 0, 2, h)
+        g.beginPath()
+        g.moveTo(cueX - 1, 0)
+        g.lineTo(cueX + 10, 0)
+        g.lineTo(cueX - 1, 11)
+        g.closePath()
+        g.fill()
+      }
 
       g.fillStyle = '#ffffff'
-      g.fillRect(ratio * w - 1, 0, 2, h)
+      g.fillRect(head - 1, 0, 2, h)
     }
 
     frame = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(frame)
-  }, [deck, state.duration, state.cue, state.cues, state.name, position, peaks])
+  }, [deck, state.duration, state.cue, state.cues, state.name, state.bpm, state.beat, state.bar, position, peaks, zoom])
+
+  // 全体表示は触った所へ飛ぶ。拡大表示は再生位置が中心で動かないので、
+  // 飛ばすのではなく指の動いたぶんだけ曲を送る
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    if (zoom) dragRef.current = e.clientX
+    else seekFromPointer(e)
+  }
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!state.duration) return
+    if (zoom) {
+      if (dragRef.current === null) return
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const delta = (e.clientX - dragRef.current) / canvas.clientWidth * zoom
+      dragRef.current = e.clientX
+      onNudge?.(-delta)
+      return
+    }
+    if (e.buttons || e.pointerType === 'touch') seekFromPointer(e)
+  }
 
   const seekFromPointer = (e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -394,9 +594,11 @@ function Waveform({ deck, state, position, peaks, onSeek }: {
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-16 select-none touch-none cursor-pointer"
-      onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); seekFromPointer(e) }}
-      onPointerMove={e => { if (e.buttons || e.pointerType === 'touch') seekFromPointer(e) }}
+      className={`w-full select-none touch-none ${zoom ? 'h-20 cursor-grab' : 'h-16 cursor-pointer'}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => { dragRef.current = null }}
+      onPointerCancel={() => { dragRef.current = null }}
     />
   )
 }
@@ -407,7 +609,7 @@ function formatTime(sec: number) {
 }
 
 // 読み込んだ曲と再生位置。再生中だけ自前で時計を回す
-function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm }: {
+function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm, onKeylock, onSync, onMaster }: {
   deck: number
   state: DeckState
   position: (deck: DeckIndex) => number
@@ -416,9 +618,13 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm 
   onLoad: (file: File) => void
   onSeek: (to: number) => void
   onBpm: (bpm: number) => void
+  onKeylock: (on: boolean) => void
+  onSync: () => void
+  onMaster: () => void
 }) {
   const [at, setAt] = useState(0)
   const [tempo, setTempo] = useState(1)
+  const [zoom, setZoom] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 同じ値なら再描画されないので、止まっていても回しておいてよい
@@ -443,6 +649,32 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm 
           {state.bpm ? (state.bpm * tempo).toFixed(1) : '--.-'}
           <span className="text-xs text-gray-500 ml-1">BPM</span>
         </span>
+        <SyncButton state={state} onSync={onSync} onMaster={onMaster} />
+        {/* テンポを変えてもピッチを保つ */}
+        <button
+          onClick={() => onKeylock(!state.keylock)}
+          className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border ${
+            state.keylock
+              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400'
+          }`}
+        >
+          KEY
+        </button>
+        {/* 押すたびに寄り、一番寄ったら全体表示へ戻る */}
+        <button
+          onClick={() => setZoom(prev => {
+            const next = prev === null ? 0 : ZOOM_LEVELS.indexOf(prev) + 1
+            return next >= ZOOM_LEVELS.length ? null : ZOOM_LEVELS[next]
+          })}
+          className={`shrink-0 text-xs px-2.5 py-1.5 rounded-lg border tabular-nums ${
+            zoom !== null
+              ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+              : 'bg-gray-800 border-gray-700 text-gray-400'
+          }`}
+        >
+          {zoom === null ? '拡大' : `${zoom}s`}
+        </button>
         <button
           onClick={() => inputRef.current?.click()}
           className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-200"
@@ -463,6 +695,13 @@ function TrackStrip({ deck, state, position, peaks, rate, onLoad, onSeek, onBpm 
         />
       </div>
 
+      {zoom !== null && (
+        <Waveform
+          deck={deck} state={state} position={position} peaks={peaks}
+          zoom={zoom} onSeek={onSeek}
+          onNudge={(delta) => onSeek(position(deck as DeckIndex) + delta)}
+        />
+      )}
       <Waveform deck={deck} state={state} position={position} peaks={peaks} onSeek={onSeek} />
 
       <div className="flex items-center justify-between text-xs text-gray-500 font-mono">
@@ -514,10 +753,12 @@ export default function Controller() {
 
   return (
     <main
+      data-controller
       className="min-h-screen bg-gray-950 text-white w-full mx-auto flex flex-col
                  px-4 py-6 gap-6 max-w-md
                  landscape:py-3 landscape:gap-3 landscape:max-w-4xl"
       onPointerDown={() => dj.resume()}
+      onContextMenu={blockContextMenu}
     >
 
       {/* Header */}
@@ -556,6 +797,9 @@ export default function Controller() {
         onLoad={(file) => dj.load(activeDeck as DeckIndex, file)}
         onSeek={(to) => dj.seek(activeDeck as DeckIndex, to)}
         onBpm={(bpm) => dj.setBpm(activeDeck as DeckIndex, bpm)}
+        onKeylock={(on) => dj.setKeylock(activeDeck as DeckIndex, on)}
+        onSync={() => send({ type: 'note_on', channel: activeDeck, note: SYNC_NOTE, velocity: 127 })}
+        onMaster={() => send({ type: 'note_on', channel: activeDeck, note: MASTER_NOTE, velocity: 127 })}
       />
 
       {/* 操作面。横画面では左にタンテ、右にPADとEQを置く */}
@@ -567,6 +811,12 @@ export default function Controller() {
           <Turntable channel={activeDeck} send={send} />
         </div>
         <div className="absolute left-0 bottom-0 flex flex-col gap-2">
+          <ScratchButton
+            channel={activeDeck}
+            bpm={(dj.decks[activeDeck].bpm ?? 0) * dj.rate(activeDeck as DeckIndex)}
+            beatPhase={() => dj.beatPhase(activeDeck as DeckIndex)}
+            send={send}
+          />
           <CuePlayButton channel={activeDeck} send={send} />
           <PlayStopButton channel={activeDeck} send={send} />
         </div>

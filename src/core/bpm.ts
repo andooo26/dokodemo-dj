@@ -1,4 +1,5 @@
-// BPM推定。音の立ち上がりを周波数領域で拾い、区間ごとに解いて中央値を採る。
+// ビートグリッドの推定。音の立ち上がりを周波数領域で拾い、
+// まず周期(BPM)を、次にその周期をどこに置くか(位相)を決める。
 // 解析は重いので、途中で制御を返して画面を固めない。
 
 const BPM_MIN = 85                  // 倍テンポ・半テンポをこの範囲へ畳む
@@ -16,6 +17,14 @@ const WINDOW_SEC = 12               // 区間の長さ
 const WINDOW_HOP_SEC = 6
 const SMOOTH_SEC = 0.5              // 局所平均を取る幅
 const YIELD_FRAMES = 4000           // これだけ進めたら一度制御を返す
+const BEATS_PER_BAR = 4             // 小節線は4拍ごと。ダンスミュージック前提
+
+// 拍の位置と速さ。時刻は曲の頭からの秒数で、再生速度の影響を受けない
+export type BeatGrid = {
+  bpm: number
+  firstBeat: number   // 最初の拍
+  firstBar: number    // 最初の小節頭。firstBeat から 0〜3拍ぶん後ろ
+}
 
 // 基数2のFFT。回転因子は使い回す
 function makeFft(n: number) {
@@ -144,11 +153,25 @@ function windowAc(onset: Float32Array, from: number, to: number, maxLag: number)
   return ac
 }
 
-export async function analyzeBpm(buffer: AudioBuffer): Promise<number | null> {
+// 周期が分かったあと、それをどこに置けば立ち上がりに乗るかを探す。
+// phase から period ごとに拾った値の合計が、いちばん大きい所を採る
+function combScore(onset: Float32Array, phase: number, period: number): number {
+  let sum = 0
+  for (let t = phase; t < onset.length - 1; t += period) {
+    const i = Math.floor(t)
+    const frac = t - i
+    sum += onset[i] * (1 - frac) + onset[i + 1] * frac
+  }
+  return sum
+}
+
+export async function analyzeBeats(buffer: AudioBuffer): Promise<BeatGrid | null> {
   const signal = downmix(buffer)
   const rate = buffer.sampleRate / Math.max(1, Math.round(buffer.sampleRate / TARGET_RATE))
   const flux = await fluxEnvelope(signal)
   if (!flux.length) return null
+  // コマの中心が、その立ち上がりの起きた時刻
+  const timeOf = (frame: number) => (frame * HOP + FFT_SIZE / 2) / rate
 
   const secPerFrame = HOP / rate
   const onset = rectify(flux, Math.round(SMOOTH_SEC / secPerFrame))
@@ -214,5 +237,25 @@ export async function analyzeBpm(buffer: AudioBuffer): Promise<number | null> {
     const v = comb(cand)
     if (v > fine) { fine = v; bpm = cand }
   }
-  return Math.round(bpm * 10) / 10
+  bpm = Math.round(bpm * 10) / 10
+
+  // ここから位相。1コマ刻みで1拍ぶんを総当たりする
+  const beatLen = lagOf(bpm)
+  let phase = 0
+  let best = -Infinity
+  for (let p = 0; p < beatLen; p++) {
+    const v = combScore(onset, p, beatLen)
+    if (v > best) { best = v; phase = p }
+  }
+
+  // 小節頭は、1拍目から4拍のうちどれか。4拍ごとに拾って強い所を選ぶ
+  let bar = phase
+  let barBest = -Infinity
+  for (let k = 0; k < BEATS_PER_BAR; k++) {
+    const p = phase + k * beatLen
+    const v = combScore(onset, p, beatLen * BEATS_PER_BAR)
+    if (v > barBest) { barBest = v; bar = p }
+  }
+
+  return { bpm, firstBeat: timeOf(phase), firstBar: timeOf(bar) }
 }

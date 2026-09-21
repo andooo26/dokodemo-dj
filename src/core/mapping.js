@@ -21,8 +21,12 @@ const KNOBS = [
 const TURNTABLE_STOP_NOTE = 46
 const CUE_NOTE            = 47
 const PLAY_NOTE           = 0
+const SYNC_NOTE           = 48
+const MASTER_NOTE         = 49
 
 // TEMPOは14bit。ピッチベンドはジョグが使うのでCCペアで送る。
+const SCRATCH_GATE_CC = 14   // 擦り音の音量。トランスフォーマーで拍に刻む
+
 const PITCH_CC     = 9
 const PITCH_CC_LSB = PITCH_CC + 32
 const PITCH_MAX    = 16383
@@ -45,7 +49,8 @@ function padByNote(note) {
 module.exports = {
   DECK1, DECK2,
   PADS, KNOBS,
-  TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE,
+  TURNTABLE_STOP_NOTE, CUE_NOTE, PLAY_NOTE, SYNC_NOTE, MASTER_NOTE,
+  SCRATCH_GATE_CC,
   PITCH_CC, PITCH_CC_LSB, PITCH_MAX, PITCH_CENTER, PITCH_DETENT,
   pitchToCC,
   PAD_NOTES, KNOB_LABELS,

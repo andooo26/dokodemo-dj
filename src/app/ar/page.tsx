@@ -416,7 +416,12 @@ export default function ARPage() {
   }, [isReady])
 
   return (
-    <div className="relative w-screen bg-black overflow-hidden font-sans" style={{ height: '100dvh' }}>
+    <div
+      data-controller
+      className="relative w-screen bg-black overflow-hidden font-sans"
+      style={{ height: '100dvh' }}
+      onContextMenu={(e) => { if (!(e.target as HTMLElement).closest('a')) e.preventDefault() }}
+    >
 
       <video ref={videoRef} autoPlay playsInline muted
         className="absolute inset-0 w-full h-full object-cover" />
